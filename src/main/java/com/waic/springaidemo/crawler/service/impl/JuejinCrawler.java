@@ -7,6 +7,7 @@ import com.waic.springaidemo.common.enums.DataSourceEnum;
 import com.waic.springaidemo.common.enums.PeriodEnum;
 import com.waic.springaidemo.common.utils.FilePathUtils;
 import com.waic.springaidemo.crawler.entity.CrawlerContext;
+import com.waic.springaidemo.crawler.utils.HtmlToMarkdown;
 import com.waic.springaidemo.crawler.utils.PageFetcher;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -128,17 +129,20 @@ public class JuejinCrawler extends AbstractCrawler {
 
     @Override
     public void download(HotItem item, CrawlerContext context) throws IOException {
-        Document document = pageFetcher.fetchDocument(item.getUrl());
-        Element articleElement = document.selectFirst("article.markdown-body");
-        if (articleElement == null) {
-            articleElement = document.selectFirst(".article-content");
-        }
+        Document document = pageFetcher.fetchDocument(item.getUrl(),
+                doc -> !doc.select("#article-root").isEmpty());
+        Element articleElement = document.selectFirst("#article-root");
         if (articleElement == null) {
             log.warn("Article content not found for url: {}", item.getUrl());
             item.setContentPath("");
             return;
         }
-        String content = articleElement.text();
+        String content = HtmlToMarkdown.convert(articleElement);
+        if (content.isBlank()) {
+            log.warn("Article content is blank for url: {}", item.getUrl());
+            item.setContentPath("");
+            return;
+        }
         String slug = extractSlug(item.getUrl());
         Path contentFilePath = FilePathUtils.getContentFilePath(context.getSource(), context.getPeriod(),
                 context.getDate(), context.getCategory(), context.getLanguage(), slug);
