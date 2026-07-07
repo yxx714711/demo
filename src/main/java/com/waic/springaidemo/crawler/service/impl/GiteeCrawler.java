@@ -56,13 +56,13 @@ public class GiteeCrawler extends AbstractCrawler {
     @Override
     protected List<String> getCategories() {
         List<String> categories = crawlerProperties.getGitee().getCategories();
-        return CollectionUtils.isEmpty(categories) ? Arrays.asList("人工智能", "程序开发") : categories;
+        return CollectionUtils.isEmpty(categories) ? List.of("all") : categories;
     }
 
     @Override
     protected List<String> getLanguages() {
         List<String> languages = crawlerProperties.getGitee().getLanguages();
-        return CollectionUtils.isEmpty(languages) ? List.of("java") : languages;
+        return CollectionUtils.isEmpty(languages) ? List.of("all") : languages;
     }
 
     @Override

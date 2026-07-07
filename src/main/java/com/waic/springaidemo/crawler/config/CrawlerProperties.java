@@ -33,7 +33,6 @@ public class CrawlerProperties {
     @Data
     public static class GithubConfig {
         private List<String> languages = new ArrayList<>();
-        private List<String> keywords = new ArrayList<>();
         private Integer dailyTopN = 10;
         private Integer weeklyTopN = 10;
         private Integer monthlyTopN = 10;

@@ -49,7 +49,7 @@ public class JuejinCrawler extends AbstractCrawler {
     @Override
     protected List<String> getCategories() {
         List<String> categories = crawlerProperties.getJuejin().getCategories();
-        return CollectionUtils.isEmpty(categories) ? List.of("后端") : categories;
+        return CollectionUtils.isEmpty(categories) ? List.of("all") : categories;
     }
 
     @Override
@@ -59,7 +59,8 @@ public class JuejinCrawler extends AbstractCrawler {
 
     @Override
     public FetchResult crawl(CrawlerContext context) {
-        String url = String.format(HOT_URL, context.getCategory());
+        String categoryParam = "all".equals(context.getCategory()) ? "" : context.getCategory();
+        String url = String.format(HOT_URL, categoryParam);
         log.info("Crawling Juejin hot articles: {}", url);
 
         Document document = pageFetcher.fetchDocument(url);
