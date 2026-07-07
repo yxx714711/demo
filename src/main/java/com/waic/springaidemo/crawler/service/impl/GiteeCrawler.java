@@ -39,6 +39,9 @@ public class GiteeCrawler extends AbstractCrawler {
     private static final String EXPLORE_URL = "https://gitee.com/explore/%s?lang=%s&type=hot";
     private static final List<String> SUPPORTED_README_BRANCHES = Arrays.asList("master", "main");
 
+    private static final String DAILY_TAB_SELECTOR = "[data-tab='daily-trending'] .explore-trending-projects__list-item";
+    private static final String WEEKLY_TAB_SELECTOR = "[data-tab='weekly-trending'] .explore-trending-projects__list-item";
+
     private final CrawlerProperties crawlerProperties;
     private final PageFetcher pageFetcher;
     private final HttpClient httpClient = HttpClient.newBuilder().followRedirects(HttpClient.Redirect.NORMAL).build();
@@ -70,27 +73,12 @@ public class GiteeCrawler extends AbstractCrawler {
         String url = String.format(EXPLORE_URL, context.getCategory(), context.getLanguage());
         log.info("Crawling Gitee explore: {}", url);
 
-        Document document = pageFetcher.fetchDocument(url);
-        Elements items = document.select(".repository-item");
-        if (items.isEmpty()) {
-            log.warn("No Gitee items found for url: {}", url);
-        }
+        Document document = pageFetcher.fetchDocumentWithPlaywright(url);
+        int topN = crawlerProperties.getGitee().getDailyTopN();
 
         List<HotItem> hotItems = new ArrayList<>();
-        int topN = crawlerProperties.getGitee().getDailyTopN();
-        int count = 0;
-        for (Element itemElement : items) {
-            if (count >= topN) {
-                break;
-            }
-            HotItem item = parseItem(itemElement, context);
-            if (item == null) {
-                continue;
-            }
-            downloadReadme(item, context);
-            hotItems.add(item);
-            count++;
-        }
+        parseTabItems(document, DAILY_TAB_SELECTOR, PeriodEnum.DAILY, topN, context, hotItems);
+        parseTabItems(document, WEEKLY_TAB_SELECTOR, PeriodEnum.WEEKLY, topN, context, hotItems);
 
         return FetchResult.builder()
                 .source(context.getSource())
@@ -102,8 +90,33 @@ public class GiteeCrawler extends AbstractCrawler {
                 .build();
     }
 
-    private HotItem parseItem(Element itemElement, CrawlerContext context) {
-        Element linkElement = itemElement.selectFirst("a.title");
+    /**
+     * 解析指定 tab 下的热门项目列表，结果追加到 hotItems
+     */
+    private void parseTabItems(Document document, String selector, PeriodEnum period, int topN,
+                               CrawlerContext context, List<HotItem> hotItems) {
+        Elements items = document.select(selector);
+        if (items.isEmpty()) {
+            log.warn("No Gitee trending items found for url period: {}", period);
+            return;
+        }
+        int count = 0;
+        for (Element itemElement : items) {
+            if (count >= topN) {
+                break;
+            }
+            HotItem item = parseItem(itemElement, context, period);
+            if (item == null) {
+                continue;
+            }
+            downloadReadme(item, context);
+            hotItems.add(item);
+            count++;
+        }
+    }
+
+    private HotItem parseItem(Element itemElement, CrawlerContext context, PeriodEnum period) {
+        Element linkElement = itemElement.selectFirst(".title a");
         if (linkElement == null) {
             return null;
         }
@@ -114,7 +127,7 @@ public class GiteeCrawler extends AbstractCrawler {
         String fullUrl = "https://gitee.com" + relativeUrl;
         String title = linkElement.text().trim();
         String description = "";
-        Element descElement = itemElement.selectFirst(".desc");
+        Element descElement = itemElement.selectFirst(".description");
         if (descElement != null) {
             description = descElement.text().trim();
         }
@@ -125,7 +138,7 @@ public class GiteeCrawler extends AbstractCrawler {
                 .title(title)
                 .url(fullUrl)
                 .source(context.getSource())
-                .period(context.getPeriod())
+                .period(period)
                 .category(context.getCategory())
                 .language(context.getLanguage())
                 .summary(description)

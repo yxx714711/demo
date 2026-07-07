@@ -71,7 +71,7 @@ public class GithubCrawler extends AbstractCrawler {
         String url = String.format(TRENDING_URL, langParam, periodParam);
         log.info("Crawling GitHub trending: {}", url);
 
-        Document document = pageFetcher.fetchDocument(url);
+        Document document = pageFetcher.fetchDocument(url, doc -> !doc.select("article.Box-row").isEmpty());
         Elements rows = document.select("article.Box-row");
         if (rows.isEmpty()) {
             log.warn("No trending items found for url: {}", url);

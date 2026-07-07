@@ -63,8 +63,8 @@ public class JuejinCrawler extends AbstractCrawler {
         String url = String.format(HOT_URL, categoryParam);
         log.info("Crawling Juejin hot articles: {}", url);
 
-        Document document = pageFetcher.fetchDocument(url);
-        Elements items = document.select(".article-item");
+        Document document = pageFetcher.fetchDocument(url, doc -> !doc.select("a.article-item-link").isEmpty());
+        Elements items = document.select("a.article-item-link");
         if (items.isEmpty()) {
             log.warn("No Juejin items found for url: {}", url);
         }
@@ -96,21 +96,21 @@ public class JuejinCrawler extends AbstractCrawler {
     }
 
     private HotItem parseItem(Element itemElement, CrawlerContext context) {
-        Element titleElement = itemElement.selectFirst(".title");
-        Element linkElement = itemElement.selectFirst("a");
-        if (titleElement == null || linkElement == null) {
-            return null;
-        }
-        String relativeUrl = linkElement.attr("href");
+        // itemElement 本身就是 a.article-item-link，href 即文章链接
+        String relativeUrl = itemElement.attr("href");
         if (relativeUrl.isBlank()) {
             return null;
         }
         String fullUrl = relativeUrl.startsWith("http") ? relativeUrl : "https://juejin.cn" + relativeUrl;
+        Element titleElement = itemElement.selectFirst(".article-title");
+        if (titleElement == null) {
+            return null;
+        }
         String title = titleElement.text().trim();
         String description = "";
-        Element descElement = itemElement.selectFirst(".abstract");
+        Element descElement = itemElement.selectFirst(".article-author-name-text");
         if (descElement != null) {
-            description = descElement.text().trim();
+            description = "作者: " + descElement.text().trim();
         }
 
         String slug = extractSlug(fullUrl);
