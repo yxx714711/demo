@@ -109,7 +109,6 @@ public class GiteeCrawler extends AbstractCrawler {
             if (item == null) {
                 continue;
             }
-            downloadReadme(item, context);
             hotItems.add(item);
             count++;
         }
@@ -146,11 +145,12 @@ public class GiteeCrawler extends AbstractCrawler {
                 .build();
     }
 
-    private void downloadReadme(HotItem item, CrawlerContext context) {
+    @Override
+    public void download(HotItem item, CrawlerContext context) throws IOException {
         String repoPath = item.getUrl().replace("https://gitee.com/", "");
         String[] parts = repoPath.split("/");
         if (parts.length < 2) {
-            return;
+            throw new IOException("Invalid repo path: " + item.getUrl());
         }
         String owner = parts[0];
         String repo = parts[1];
@@ -166,19 +166,20 @@ public class GiteeCrawler extends AbstractCrawler {
                 if (response.statusCode() == 200) {
                     String content = response.body();
                     String slug = owner + "_" + repo;
-                    Path contentPath = FilePathUtils.getContentFilePath(context.getSource(), context.getPeriod(),
+                    Path contentFilePath = FilePathUtils.getContentFilePath(context.getSource(), context.getPeriod(),
                             context.getDate(), context.getCategory(), context.getLanguage(), slug);
-                    Files.createDirectories(contentPath.getParent());
-                    Files.writeString(contentPath, content);
-                    item.setContentPath(contentPath.toString().replace("\\", "/"));
+                    Files.createDirectories(contentFilePath.getParent());
+                    Files.writeString(contentFilePath, content);
+                    item.setContentPath(contentFilePath.toString().replace("\\", "/"));
+                    log.info("Downloaded README for {} to {}", item.getTitle(), item.getContentPath());
                     return;
                 }
-            } catch (IOException | InterruptedException e) {
-                log.warn("Failed to download Gitee README from {}: {}", rawUrl, e.getMessage());
-                if (e instanceof InterruptedException) {
-                    Thread.currentThread().interrupt();
-                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new IOException("Interrupted while downloading Gitee README from " + rawUrl, e);
             }
         }
+        throw new IOException("Failed to download README for " + item.getTitle()
+                + " (all branches failed): " + item.getUrl());
     }
 }

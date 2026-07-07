@@ -46,8 +46,13 @@ public class PageFetcher {
             return doc;
         } catch (Exception e) {
             log.warn("Jsoup fetch failed/validation failed for {}, fallback to Playwright", url, e);
-            String html = playwrightManager.fetchHtml(url);
-            return Jsoup.parse(html, url);
+            try {
+                String html = playwrightManager.fetchHtml(url);
+                return Jsoup.parse(html, url);
+            } catch (Exception playwrightException) {
+                log.error("Playwright fallback also failed for {}", url, playwrightException);
+                throw new RuntimeException("All fetch methods failed for URL: " + url, playwrightException);
+            }
         }
     }
 
@@ -74,7 +79,12 @@ public class PageFetcher {
             return JsoupUtils.fetchHtml(url);
         } catch (Exception e) {
             log.warn("Jsoup fetch failed for {}, fallback to Playwright", url, e);
-            return playwrightManager.fetchHtml(url);
+            try {
+                return playwrightManager.fetchHtml(url);
+            } catch (Exception playwrightException) {
+                log.error("Playwright fallback also failed for {}", url, playwrightException);
+                throw new RuntimeException("All fetch methods failed for URL: " + url, playwrightException);
+            }
         }
     }
 }

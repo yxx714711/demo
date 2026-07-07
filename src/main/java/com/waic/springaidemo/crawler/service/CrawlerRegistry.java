@@ -4,6 +4,7 @@ import com.waic.springaidemo.common.entity.FetchResult;
 import com.waic.springaidemo.common.enums.PeriodEnum;
 import com.waic.springaidemo.crawler.entity.CrawlerContext;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDate;
@@ -13,6 +14,7 @@ import java.util.List;
 /**
  * 抓取器注册中心
  */
+@Slf4j
 @Component
 @RequiredArgsConstructor
 public class CrawlerRegistry {
@@ -49,8 +51,12 @@ public class CrawlerRegistry {
                 if (!crawler.supports(context)) {
                     continue;
                 }
-                FetchResult result = crawler.crawl(context);
-                results.add(result);
+                try {
+                    FetchResult result = crawler.crawl(context);
+                    results.add(result);
+                } catch (Exception e) {
+                    log.warn("Crawl failed for {} context={}, skipping", crawler.getClass().getSimpleName(), context, e);
+                }
             }
         }
         return results;

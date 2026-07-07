@@ -80,7 +80,6 @@ public class JuejinCrawler extends AbstractCrawler {
             if (item == null) {
                 continue;
             }
-            downloadArticle(item, context);
             hotItems.add(item);
             count++;
         }
@@ -127,27 +126,26 @@ public class JuejinCrawler extends AbstractCrawler {
                 .build();
     }
 
-    private void downloadArticle(HotItem item, CrawlerContext context) {
-        try {
-            Document document = pageFetcher.fetchDocument(item.getUrl());
-            Element articleElement = document.selectFirst("article.markdown-body");
-            if (articleElement == null) {
-                articleElement = document.selectFirst(".article-content");
-            }
-            if (articleElement == null) {
-                log.warn("Article content not found for url: {}", item.getUrl());
-                return;
-            }
-            String content = articleElement.text();
-            String slug = extractSlug(item.getUrl());
-            Path contentPath = FilePathUtils.getContentFilePath(context.getSource(), context.getPeriod(),
-                    context.getDate(), context.getCategory(), context.getLanguage(), slug);
-            Files.createDirectories(contentPath.getParent());
-            Files.writeString(contentPath, content);
-            item.setContentPath(contentPath.toString().replace("\\", "/"));
-        } catch (IOException e) {
-            log.warn("Failed to download Juejin article {}: {}", item.getUrl(), e.getMessage());
+    @Override
+    public void download(HotItem item, CrawlerContext context) throws IOException {
+        Document document = pageFetcher.fetchDocument(item.getUrl());
+        Element articleElement = document.selectFirst("article.markdown-body");
+        if (articleElement == null) {
+            articleElement = document.selectFirst(".article-content");
         }
+        if (articleElement == null) {
+            log.warn("Article content not found for url: {}", item.getUrl());
+            item.setContentPath("");
+            return;
+        }
+        String content = articleElement.text();
+        String slug = extractSlug(item.getUrl());
+        Path contentFilePath = FilePathUtils.getContentFilePath(context.getSource(), context.getPeriod(),
+                context.getDate(), context.getCategory(), context.getLanguage(), slug);
+        Files.createDirectories(contentFilePath.getParent());
+        Files.writeString(contentFilePath, content);
+        item.setContentPath(contentFilePath.toString().replace("\\", "/"));
+        log.info("Downloaded article for {} to {}", item.getTitle(), item.getContentPath());
     }
 
     private String extractSlug(String url) {

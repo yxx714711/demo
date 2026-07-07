@@ -51,4 +51,13 @@ public interface PersistenceService {
      * @throws IOException IO 异常
      */
     String saveReport(String reportType, LocalDate date, String content) throws IOException;
+
+    /**
+     * 批量更新已持久化 FetchResult 中 HotItem 的 contentPath
+     * <p>读取原有 JSON → 按 item.id 匹配并更新 contentPath → 写回 JSON</p>
+     *
+     * @param result 包含更新后 HotItem 的 FetchResult
+     * @throws IOException IO 异常
+     */
+    void updateItems(FetchResult result) throws IOException;
 }

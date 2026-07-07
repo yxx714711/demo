@@ -3,6 +3,7 @@ package com.waic.springaidemo.persistence.service.impl;
 import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.ObjectMapper;
 import com.waic.springaidemo.common.entity.FetchResult;
+import com.waic.springaidemo.common.entity.HotItem;
 import com.waic.springaidemo.common.enums.DataSourceEnum;
 import com.waic.springaidemo.common.enums.PeriodEnum;
 import com.waic.springaidemo.common.utils.FilePathUtils;
@@ -19,6 +20,9 @@ import java.nio.file.Paths;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 /**
@@ -86,5 +90,34 @@ public class PersistenceServiceImpl implements PersistenceService {
         Files.writeString(filePath, content, StandardCharsets.UTF_8);
         log.info("Saved report to {}", filePath);
         return filePath.toString().replace("\\", "/");
+    }
+
+    @Override
+    public void updateItems(FetchResult result) throws IOException {
+        Path filePath = FilePathUtils.getHotItemsFilePath(result.getSource(), result.getPeriod(),
+                result.getDate(), result.getCategory(), result.getLanguage());
+        if (!Files.exists(filePath)) {
+            log.warn("Fetch result file not found: {}", filePath);
+            return;
+        }
+        // 读取原有 JSON
+        FetchResult existing = objectMapper.readValue(
+                Files.readString(filePath, StandardCharsets.UTF_8),
+                new TypeReference<FetchResult>() {});
+        // 按 id 构建更新索引
+        Map<String, String> contentPathMap = result.getItems().stream()
+                .filter(item -> item.getId() != null)
+                .collect(Collectors.toMap(HotItem::getId, HotItem::getContentPath, (a, b) -> b));
+        // 更新匹配项的 contentPath
+        for (HotItem item : existing.getItems()) {
+            String newContentPath = contentPathMap.get(item.getId());
+            if (newContentPath != null) {
+                item.setContentPath(newContentPath);
+            }
+        }
+        // 写回
+        String json = objectMapper.writeValueAsString(existing);
+        Files.writeString(filePath, json, StandardCharsets.UTF_8);
+        log.info("Updated contentPath for {} items in {}", contentPathMap.size(), filePath);
     }
 }
