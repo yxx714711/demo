@@ -1,6 +1,7 @@
 package com.waic.springaidemo.pipeline.controller;
 
 import com.waic.springaidemo.common.entity.FetchResult;
+import com.waic.springaidemo.common.enums.DataSourceEnum;
 import com.waic.springaidemo.common.enums.PeriodEnum;
 import com.waic.springaidemo.pipeline.service.PipelineService;
 import lombok.RequiredArgsConstructor;
@@ -41,6 +42,26 @@ public class PipelineController {
             date = LocalDate.now();
         }
         return pipelineService.runCrawl(date, PeriodEnum.of(period));
+    }
+
+    /**
+     * 手动触发指定数据源的抓取
+     *
+     * @param source 数据源（github/gitee/juejin）
+     * @param period 周期，必填 daily/weekly/monthly
+     * @param date   日期，默认今天
+     * @return 抓取结果
+     * @throws IOException IO 异常
+     */
+    @PostMapping("/pipeline/crawl/source/{source}")
+    public List<FetchResult> crawlBySource(@PathVariable String source,
+                                           @RequestParam String period,
+                                           @RequestParam(required = false)
+                                           @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) throws IOException {
+        if (date == null) {
+            date = LocalDate.now();
+        }
+        return pipelineService.runCrawlBySource(DataSourceEnum.of(source), date, PeriodEnum.of(period));
     }
 
     /**

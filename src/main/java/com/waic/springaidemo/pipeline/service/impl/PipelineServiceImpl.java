@@ -37,7 +37,26 @@ public class PipelineServiceImpl implements PipelineService {
 
         // Step 1: 抓取元数据（不下载内容）
         List<FetchResult> results = crawlerRegistry.crawlAll(date, period);
+        return persistAndDownload(results);
+    }
 
+    @Override
+    public List<FetchResult> runCrawlBySource(DataSourceEnum source, LocalDate date, PeriodEnum period) throws IOException {
+        log.info("Running crawl pipeline for source={}, date={}, period={}", source, date, period);
+
+        // Step 1: 抓取指定数据源的元数据（不下载内容）
+        List<FetchResult> results = crawlerRegistry.crawlBySource(source, date, period);
+        return persistAndDownload(results);
+    }
+
+    /**
+     * 持久化抓取结果并逐条下载正文（Step 2 + Step 3）。
+     * 单条下载失败时会跳过该条并继续，contentPath 保持 "PENDING" 供后续重试。
+     *
+     * @param results 抓取结果列表
+     * @return 原样返回抓取结果列表
+     */
+    private List<FetchResult> persistAndDownload(List<FetchResult> results) throws IOException {
         // Step 2: 设置默认 contentPath 并写入 JSON
         for (FetchResult result : results) {
             for (HotItem item : result.getItems()) {
@@ -61,8 +80,6 @@ public class PipelineServiceImpl implements PipelineService {
             }
             persistenceService.updateItems(result);
         }
-
-        log.info("Crawl pipeline completed, processed {} results", results.size());
         return results;
     }
 

@@ -40,7 +40,7 @@ public class PersistenceServiceImpl implements PersistenceService {
         Path filePath = FilePathUtils.getHotItemsFilePath(result.getSource(), result.getPeriod(),
                 result.getDate(), result.getCategory(), result.getLanguage());
         Files.createDirectories(filePath.getParent());
-        String json = objectMapper.writeValueAsString(result);
+        String json = objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(result);
         Files.writeString(filePath, json, StandardCharsets.UTF_8);
         log.info("Saved fetch result to {}", filePath);
     }
@@ -115,8 +115,8 @@ public class PersistenceServiceImpl implements PersistenceService {
                 item.setContentPath(newContentPath);
             }
         }
-        // 写回
-        String json = objectMapper.writeValueAsString(existing);
+        // 写回（带缩进）
+        String json = objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(existing);
         Files.writeString(filePath, json, StandardCharsets.UTF_8);
         log.info("Updated contentPath for {} items in {}", contentPathMap.size(), filePath);
     }

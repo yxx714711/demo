@@ -33,6 +33,7 @@ import java.util.List;
 public class JuejinCrawler extends AbstractCrawler {
 
     private static final String HOT_URL = "https://juejin.cn/hot/articles/%s";
+    private static final String HOT_URL_ALL = "https://juejin.cn/hot/articles";
 
     private final CrawlerProperties crawlerProperties;
     private final PageFetcher pageFetcher;
@@ -60,11 +61,14 @@ public class JuejinCrawler extends AbstractCrawler {
 
     @Override
     public FetchResult crawl(CrawlerContext context) {
-        String categoryParam = "all".equals(context.getCategory()) ? "" : context.getCategory();
-        String url = String.format(HOT_URL, categoryParam);
+        String url = "all".equals(context.getCategory())
+                ? HOT_URL_ALL
+                : String.format(HOT_URL, context.getCategory());
         log.info("Crawling Juejin hot articles: {}", url);
 
-        Document document = pageFetcher.fetchDocument(url, doc -> !doc.select("a.article-item-link").isEmpty());
+        // 掘金为 Nuxt SSR/SPA，Jsoup 直连会被反爬返回空壳，故直接走 Playwright，
+        // 并显式等待列表选择器出现后再取内容（避免 waitForLoadState 过早返回空壳）。
+        Document document = pageFetcher.fetchDocumentWithPlaywright(url, "a.article-item-link");
         Elements items = document.select("a.article-item-link");
         if (items.isEmpty()) {
             log.warn("No Juejin items found for url: {}", url);
@@ -129,8 +133,8 @@ public class JuejinCrawler extends AbstractCrawler {
 
     @Override
     public void download(HotItem item, CrawlerContext context) throws IOException {
-        Document document = pageFetcher.fetchDocument(item.getUrl(),
-                doc -> !doc.select("#article-root").isEmpty());
+        // 详情页同样走 Playwright，并等待正文容器 #article-root 渲染完成。
+        Document document = pageFetcher.fetchDocumentWithPlaywright(item.getUrl(), "#article-root");
         Element articleElement = document.selectFirst("#article-root");
         if (articleElement == null) {
             log.warn("Article content not found for url: {}", item.getUrl());

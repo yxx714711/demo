@@ -1,6 +1,7 @@
 package com.waic.springaidemo.crawler.service;
 
 import com.waic.springaidemo.common.entity.FetchResult;
+import com.waic.springaidemo.common.enums.DataSourceEnum;
 import com.waic.springaidemo.common.enums.PeriodEnum;
 import com.waic.springaidemo.crawler.entity.CrawlerContext;
 import lombok.RequiredArgsConstructor;
@@ -58,6 +59,49 @@ public class CrawlerRegistry {
                     log.warn("Crawl failed for {} context={}, skipping", crawler.getClass().getSimpleName(), context, e);
                 }
             }
+        }
+        return results;
+    }
+
+    /**
+     * 抓取指定数据源、日期、周期下的所有上下文。
+     * 若没有任何 crawler 支持该 (source, period) 组合，抛出 IllegalStateException；
+     * 单个上下文抓取失败时会跳过该上下文并继续，不影响其他上下文。
+     *
+     * @param source 数据源
+     * @param date   日期
+     * @param period 周期
+     * @return 抓取结果列表
+     */
+    public List<FetchResult> crawlBySource(DataSourceEnum source, LocalDate date, PeriodEnum period) {
+        CrawlerContext probe = CrawlerContext.builder()
+                .source(source)
+                .period(period)
+                .date(date)
+                .build();
+
+        List<FetchResult> results = new ArrayList<>();
+        boolean anySupported = false;
+        for (Crawler crawler : crawlers) {
+            if (!crawler.supports(probe)) {
+                continue;
+            }
+            anySupported = true;
+            for (CrawlerContext context : crawler.buildContexts(date, period)) {
+                if (!crawler.supports(context)) {
+                    continue;
+                }
+                try {
+                    results.add(crawler.crawl(context));
+                } catch (Exception e) {
+                    log.warn("Crawl failed for {} context={}, skipping",
+                            crawler.getClass().getSimpleName(), context, e);
+                }
+            }
+        }
+
+        if (!anySupported) {
+            throw new IllegalStateException("No crawler supports source=" + source + ", period=" + period);
         }
         return results;
     }

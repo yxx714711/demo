@@ -1,6 +1,7 @@
 package com.waic.springaidemo.pipeline.service;
 
 import com.waic.springaidemo.common.entity.FetchResult;
+import com.waic.springaidemo.common.enums.DataSourceEnum;
 import com.waic.springaidemo.common.enums.PeriodEnum;
 
 import java.io.IOException;
@@ -21,6 +22,17 @@ public interface PipelineService {
      * @throws IOException IO 异常
      */
     List<FetchResult> runCrawl(LocalDate date, PeriodEnum period) throws IOException;
+
+    /**
+     * 执行指定数据源、日期、周期的抓取并持久化
+     *
+     * @param source 数据源
+     * @param date   日期
+     * @param period 周期
+     * @return 抓取结果列表
+     * @throws IOException IO 异常
+     */
+    List<FetchResult> runCrawlBySource(DataSourceEnum source, LocalDate date, PeriodEnum period) throws IOException;
 
     /**
      * 生成每日报告

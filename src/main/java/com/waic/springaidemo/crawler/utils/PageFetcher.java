@@ -63,8 +63,19 @@ public class PageFetcher {
      * @return Document
      */
     public Document fetchDocumentWithPlaywright(String url) {
-        log.info("Using Playwright directly for {}", url);
-        String html = playwrightManager.fetchHtml(url);
+        return fetchDocumentWithPlaywright(url, null);
+    }
+
+    /**
+     * 直接使用 Playwright 抓取页面，并可等待指定选择器出现后再取内容。
+     *
+     * @param url            目标 URL
+     * @param waitForSelector 需等待出现的 CSS 选择器，为 null 时退化为等待 load 事件
+     * @return Document
+     */
+    public Document fetchDocumentWithPlaywright(String url, String waitForSelector) {
+        log.info("Using Playwright directly for {} (waitForSelector={})", url, waitForSelector);
+        String html = playwrightManager.fetchHtml(url, waitForSelector);
         return Jsoup.parse(html, url);
     }
 
