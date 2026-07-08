@@ -21,7 +21,6 @@ import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -60,7 +59,7 @@ public class PersistenceServiceImpl implements PersistenceService {
             for (Path file : files) {
                 try {
                     FetchResult result = objectMapper.readValue(Files.readString(file, StandardCharsets.UTF_8),
-                            new TypeReference<FetchResult>() {
+                            new TypeReference<>() {
                             });
                     results.add(result);
                 } catch (IOException e) {
@@ -103,7 +102,8 @@ public class PersistenceServiceImpl implements PersistenceService {
         // 读取原有 JSON
         FetchResult existing = objectMapper.readValue(
                 Files.readString(filePath, StandardCharsets.UTF_8),
-                new TypeReference<FetchResult>() {});
+                new TypeReference<>() {
+                });
         // 按 id 构建更新索引
         Map<String, String> contentPathMap = result.getItems().stream()
                 .filter(item -> item.getId() != null)

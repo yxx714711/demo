@@ -19,16 +19,6 @@ public class PageFetcher {
     private final PlaywrightManager playwrightManager;
 
     /**
-     * 抓取页面并解析为 Document（无验证，直接返回）
-     *
-     * @param url 目标 URL
-     * @return Document
-     */
-    public Document fetchDocument(String url) {
-        return fetchDocument(url, null);
-    }
-
-    /**
      * 抓取页面并解析为 Document，通过 validator 验证内容有效性。
      * 若 Jsoup 请求成功但 validator 校验失败（JS 渲染导致的空壳页面），
      * 会自动降级到 Playwright 重新抓取。
@@ -79,23 +69,4 @@ public class PageFetcher {
         return Jsoup.parse(html, url);
     }
 
-    /**
-     * 抓取页面原始 HTML 字符串
-     *
-     * @param url 目标 URL
-     * @return HTML 字符串
-     */
-    public String fetchHtml(String url) {
-        try {
-            return JsoupUtils.fetchHtml(url);
-        } catch (Exception e) {
-            log.warn("Jsoup fetch failed for {}, fallback to Playwright", url, e);
-            try {
-                return playwrightManager.fetchHtml(url);
-            } catch (Exception playwrightException) {
-                log.error("Playwright fallback also failed for {}", url, playwrightException);
-                throw new RuntimeException("All fetch methods failed for URL: " + url, playwrightException);
-            }
-        }
-    }
 }
