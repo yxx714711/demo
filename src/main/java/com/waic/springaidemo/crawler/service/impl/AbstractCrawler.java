@@ -44,12 +44,42 @@ public abstract class AbstractCrawler implements Crawler {
 
     @Override
     public boolean supports(CrawlerContext context) {
-        return getDataSource() == context.getSource()
-                && getSupportedPeriods().contains(context.getPeriod());
+        if (context.getSource() != getDataSource()) {
+            return false;
+        }
+        if (!getSupportedPeriods().contains(context.getPeriod())) {
+            return false;
+        }
+        if (!matchDimension(getCategories(), context.getCategory())) {
+            return false;
+        }
+        return matchDimension(getLanguages(), context.getLanguage());
+    }
+
+    /**
+     * 判断单个维度值是否合法：
+     * 维度值为 null/空 表示未指定，不约束；
+     * 维度值已指定时，若 crawler 不使用该维度（allowed 为空）则不支持，否则必须在允许列表内。
+     *
+     * @param allowed 该 crawler 支持的维度值列表
+     * @param value   待校验的维度值
+     * @return 是否合法
+     */
+    private boolean matchDimension(List<String> allowed, String value) {
+        if (value == null || value.isBlank()) {
+            return true;
+        }
+        if (allowed.isEmpty()) {
+            return false;
+        }
+        return allowed.contains(value);
     }
 
     @Override
     public List<CrawlerContext> buildContexts(LocalDate date, PeriodEnum period) {
+        if (!getSupportedPeriods().contains(period)) {
+            return List.of();
+        }
         List<CrawlerContext> contexts = new ArrayList<>();
         List<String> categories = getCategories();
         List<String> languages = getLanguages();

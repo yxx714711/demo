@@ -7,7 +7,7 @@ import com.waic.springaidemo.common.entity.HotItem;
 import com.waic.springaidemo.common.enums.DataSourceEnum;
 import com.waic.springaidemo.common.enums.PeriodEnum;
 import com.waic.springaidemo.common.utils.FilePathUtils;
-import com.waic.springaidemo.persistence.service.PersistenceService;
+import com.waic.springaidemo.persistence.service.FetchResultRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -25,12 +25,12 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 /**
- * 持久化服务实现
+ * 原始抓取结果持久化实现（hotitems.json + markdown 正文）
  */
 @Slf4j
 @Service
 @RequiredArgsConstructor
-public class PersistenceServiceImpl implements PersistenceService {
+public class FetchResultRepositoryImpl implements FetchResultRepository {
 
     private final ObjectMapper objectMapper;
 
@@ -51,7 +51,6 @@ public class PersistenceServiceImpl implements PersistenceService {
         if (!Files.exists(baseDir)) {
             return results;
         }
-
         try (Stream<Path> walk = Files.walk(baseDir)) {
             List<Path> files = walk.filter(Files::isRegularFile)
                     .filter(path -> path.getFileName().toString().equals("hotitems.json"))
@@ -59,8 +58,7 @@ public class PersistenceServiceImpl implements PersistenceService {
             for (Path file : files) {
                 try {
                     FetchResult result = objectMapper.readValue(Files.readString(file, StandardCharsets.UTF_8),
-                            new TypeReference<>() {
-                            });
+                            new TypeReference<>() {});
                     results.add(result);
                 } catch (IOException e) {
                     log.error("Failed to load fetch result from {}", file, e);
@@ -83,15 +81,6 @@ public class PersistenceServiceImpl implements PersistenceService {
     }
 
     @Override
-    public String saveReport(String reportType, LocalDate date, String content) throws IOException {
-        Path filePath = FilePathUtils.getReportFilePath(reportType, date);
-        Files.createDirectories(filePath.getParent());
-        Files.writeString(filePath, content, StandardCharsets.UTF_8);
-        log.info("Saved report to {}", filePath);
-        return filePath.toString().replace("\\", "/");
-    }
-
-    @Override
     public void updateItems(FetchResult result) throws IOException {
         Path filePath = FilePathUtils.getHotItemsFilePath(result.getSource(), result.getPeriod(),
                 result.getDate(), result.getCategory(), result.getLanguage());
@@ -99,25 +88,29 @@ public class PersistenceServiceImpl implements PersistenceService {
             log.warn("Fetch result file not found: {}", filePath);
             return;
         }
-        // 读取原有 JSON
         FetchResult existing = objectMapper.readValue(
                 Files.readString(filePath, StandardCharsets.UTF_8),
-                new TypeReference<>() {
-                });
-        // 按 id 构建更新索引
+                new TypeReference<>() {});
         Map<String, String> contentPathMap = result.getItems().stream()
                 .filter(item -> item.getId() != null)
                 .collect(Collectors.toMap(HotItem::getId, HotItem::getContentPath, (a, b) -> b));
-        // 更新匹配项的 contentPath
         for (HotItem item : existing.getItems()) {
             String newContentPath = contentPathMap.get(item.getId());
             if (newContentPath != null) {
                 item.setContentPath(newContentPath);
             }
         }
-        // 写回（带缩进）
         String json = objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(existing);
         Files.writeString(filePath, json, StandardCharsets.UTF_8);
         log.info("Updated contentPath for {} items in {}", contentPathMap.size(), filePath);
+    }
+
+    @Override
+    public List<FetchResult> loadAllByDate(PeriodEnum period, LocalDate date) throws IOException {
+        List<FetchResult> results = new ArrayList<>();
+        for (DataSourceEnum source : DataSourceEnum.values()) {
+            results.addAll(loadByDate(source, period, date));
+        }
+        return results;
     }
 }

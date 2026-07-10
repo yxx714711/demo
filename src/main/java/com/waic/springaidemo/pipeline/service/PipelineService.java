@@ -1,6 +1,7 @@
 package com.waic.springaidemo.pipeline.service;
 
 import com.waic.springaidemo.common.entity.FetchResult;
+import com.waic.springaidemo.common.entity.ReportResult;
 import com.waic.springaidemo.common.enums.DataSourceEnum;
 import com.waic.springaidemo.common.enums.PeriodEnum;
 
@@ -35,11 +36,20 @@ public interface PipelineService {
     List<FetchResult> runCrawlBySource(DataSourceEnum source, LocalDate date, PeriodEnum period) throws IOException;
 
     /**
-     * 生成每日报告
+     * 递归聚合生成报告（后序遍历 data 树，逐节点调 LLM + 落盘），返回结构化结果。
      *
-     * @param date 日期
-     * @return 报告文件路径
+     * @param period 周期（daily/weekly/monthly）
+     * @param date   日期
+     * @param force  true=忽略已有、全量重算
+     * @return 顶层 summaries 节点结果
      * @throws IOException IO 异常
      */
-    String generateDailyReport(LocalDate date) throws IOException;
+    ReportResult generateReport(PeriodEnum period, LocalDate date, boolean force) throws IOException;
+
+    /**
+     * 生成每日报告（便捷入口，force=false）
+     */
+    default ReportResult generateDailyReport(LocalDate date) throws IOException {
+        return generateReport(PeriodEnum.DAILY, date, false);
+    }
 }

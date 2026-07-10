@@ -1,7 +1,6 @@
 package com.waic.springaidemo.crawler.utils;
 
 import io.github.furstenheim.CopyDown;
-import io.github.furstenheim.Options;
 import io.github.furstenheim.OptionsBuilder;
 import lombok.extern.slf4j.Slf4j;
 import org.jsoup.nodes.Element;

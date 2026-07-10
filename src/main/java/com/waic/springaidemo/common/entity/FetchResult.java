@@ -50,8 +50,4 @@ public class FetchResult {
      */
     @Builder.Default
     private List<HotItem> items = new ArrayList<>();
-
-    public String groupKey() {
-        return String.format("%s_%s_%s_%s_%s", source.getCode(), period.getCode(), date, category, language);
-    }
 }

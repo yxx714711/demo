@@ -5,8 +5,6 @@ import com.waic.springaidemo.common.entity.FetchResult;
 import com.waic.springaidemo.common.entity.HotItem;
 import com.waic.springaidemo.common.enums.DataSourceEnum;
 import com.waic.springaidemo.common.enums.PeriodEnum;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.waic.springaidemo.common.utils.FilePathUtils;
 import com.waic.springaidemo.crawler.entity.CrawlerContext;
 import com.waic.springaidemo.crawler.utils.PageFetcher;
@@ -17,6 +15,8 @@ import org.jsoup.nodes.Element;
 import org.jsoup.select.Elements;
 import org.springframework.stereotype.Component;
 import org.springframework.util.CollectionUtils;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
 import java.io.IOException;
 import java.net.URI;
@@ -316,7 +316,7 @@ public class GithubCrawler extends AbstractCrawler {
             if (contentNode == null || contentNode.isNull()) {
                 return null;
             }
-            String content = contentNode.asText();
+            String content = contentNode.asString("");
             if (content.isBlank()) {
                 return null;
             }
@@ -333,7 +333,7 @@ public class GithubCrawler extends AbstractCrawler {
             JsonNode node = objectMapper.readTree(body);
             JsonNode downloadUrl = node.get("download_url");
             if (downloadUrl != null && !downloadUrl.isNull()) {
-                return downloadUrl.asText();
+                return downloadUrl.asString("");
             }
         } catch (Exception e) {
             log.warn("Failed to parse GitHub API download_url", e);
