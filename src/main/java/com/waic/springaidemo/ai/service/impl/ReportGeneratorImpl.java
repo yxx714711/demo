@@ -5,6 +5,7 @@ import com.waic.springaidemo.ai.entity.SummaryContext;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.client.ChatClient.PromptUserSpec;
+import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.ollama.api.OllamaChatOptions;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.stereotype.Service;
@@ -24,12 +25,11 @@ public class ReportGeneratorImpl implements ReportGenerator {
 
     private static final ClassPathResource ITEM_TEMPLATE = new ClassPathResource("prompts/item-summary.st");
     private static final ClassPathResource LEAF_TEMPLATE = new ClassPathResource("prompts/leaf-summary.st");
-    private static final int MAX_CONTEXT_TOKENS = 32768; // 32K 上下文窗口（Ollama numCtx）
     private static final ClassPathResource NODE_TEMPLATE = new ClassPathResource("prompts/node-summary.st");
     private static final String SYSTEM_PROMPT = """
             你是一位资深技术趋势分析师，长期跟踪全球开源生态与前沿技术动态，擅长从大量技术文章、项目文档与社区讨论中提炼共性主题、识别关键趋势与高价值信号。
             你的总结风格专业、克制、信息密度高，注重归纳升华而非简单罗列，能够为技术从业者提供清晰的判断依据与阅读价值。
-
+            
             严格要求：
             1. 仅基于所提供的材料进行总结，不得编造材料中未出现的技术、项目、数据或结论；材料缺失时方可基于标题合理推断，并明确标注为推断。
             2. 聚焦技术实质与工程价值，剔除营销话术、空洞口号与重复表述；区分"事实/已有进展"与"趋势判断"，趋势判断需给出简短依据。
@@ -38,12 +38,22 @@ public class ReportGeneratorImpl implements ReportGenerator {
             5. 不要添加任何额外解释、前后缀或问候语，直接输出总结正文。""";
 
     private static final String PING_SYSTEM =
-            "你是用于连通性测试的助手，请用一句话简短回复，确认服务可用即可。";
+            "你是用于连通性测试的助手，请用一句话简短回复，确认服务可用即可。/no_think";
 
     private final ChatClient chatClient;
 
-    public ReportGeneratorImpl(ChatClient.Builder chatClientBuilder) {
-        this.chatClient = chatClientBuilder.build();
+    public ReportGeneratorImpl(ChatModel chatModel) {
+        this.chatClient = ChatClient.builder(chatModel)
+                .defaultOptions(OllamaChatOptions.builder()
+                        .model("qwen3:4b")
+                        .temperature(0.5)
+                        .disableThinking()
+                        .numCtx(32768))
+                .defaultSystem("""
+                        严禁使用 thinking 模式
+                        你是简洁高效的助手，直接给出答案，不要任何思考过程、标签、推理步骤。/no_think
+                        """)
+                .build();
     }
 
     @Override
@@ -93,7 +103,6 @@ public class ReportGeneratorImpl implements ReportGenerator {
         chatClient.prompt()
                 .system(systemPrompt)
                 .user(userSpec)
-                .options(OllamaChatOptions.builder().disableThinking().numCtx(MAX_CONTEXT_TOKENS))
                 .stream()
                 .content()
                 .doOnNext(chunk -> {
@@ -102,10 +111,8 @@ public class ReportGeneratorImpl implements ReportGenerator {
                         firstTokenMs.set(Duration.between(start, Instant.now()).toMillis());
                     }
                     sb.append(chunk);
-                    if (log.isDebugEnabled()) {
-                        log.debug("[stream] stage={} seq={} chunkLen={} cumulative={}",
-                                stage, seq, chunk.length(), sb.length());
-                    }
+                    log.info("[stream] stage={} seq={} chunkLen={} cumulative={} chunk={}",
+                            stage, seq, chunk.length(), sb.length(), chunk);
                 })
                 .then()
                 .block();
