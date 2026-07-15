@@ -45,10 +45,9 @@ public class ReportGeneratorImpl implements ReportGenerator {
     public ReportGeneratorImpl(ChatModel chatModel) {
         this.chatClient = ChatClient.builder(chatModel)
                 .defaultOptions(OllamaChatOptions.builder()
-                        .model("qwen3:4b")
                         .temperature(0.5)
                         .disableThinking()
-                        .numCtx(32768))
+                        .numCtx(16384))
                 .defaultSystem("""
                         严禁使用 thinking 模式
                         你是简洁高效的助手，直接给出答案，不要任何思考过程、标签、推理步骤。/no_think

@@ -27,6 +27,7 @@ public class NodeSummary {
     private String category;
     private String language;
     private String itemId;
+    private String chunkId;
     private String path;
     @Builder.Default
     private List<String> children = new ArrayList<>();

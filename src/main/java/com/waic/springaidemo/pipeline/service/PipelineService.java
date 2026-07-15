@@ -52,4 +52,20 @@ public interface PipelineService {
     default ReportResult generateDailyReport(LocalDate date) throws IOException {
         return generateReport(PeriodEnum.DAILY, date, false);
     }
+
+    /**
+     * 触发组合任务（抓取→汇总），异步执行。立即返回触发结果，不阻塞等待。
+     *
+     * @param period 周期（daily/weekly/monthly）
+     * @return STARTED=已启动（控制器回 202）；REJECTED_RUNNING=该 period 正在运行被拒绝（控制器回 409）
+     */
+    PipelineTriggerStatus triggerPipeline(PeriodEnum period);
+
+    /**
+     * 组合任务触发结果。
+     */
+    enum PipelineTriggerStatus {
+        STARTED,
+        REJECTED_RUNNING
+    }
 }

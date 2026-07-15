@@ -28,8 +28,12 @@ public class SummaryKey {
     private String category;
     private String language;
     private String itemId;
+    private String chunkId;
 
     public LevelEnum level() {
+        if (chunkId != null) {
+            return LevelEnum.CHUNK;
+        }
         if (itemId != null) {
             return LevelEnum.ITEM;
         }

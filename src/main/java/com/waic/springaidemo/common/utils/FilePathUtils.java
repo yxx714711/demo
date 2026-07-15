@@ -68,6 +68,9 @@ public final class FilePathUtils {
                     parts.add(defaultIfBlank(key.getLanguage()));
                     if (key.getItemId() != null) {
                         parts.add(sanitizeItemId(key.getItemId()));
+                        if (key.getChunkId() != null) {
+                            parts.add(sanitizeChunkId(key.getChunkId()));
+                        }
                     }
                 }
             }
@@ -91,6 +94,25 @@ public final class FilePathUtils {
         StringBuilder sb = new StringBuilder();
         for (int i = 0; i < itemId.length(); i++) {
             char c = itemId.charAt(i);
+            if (Character.isLetterOrDigit(c) || c == '-' || c == '_' || c == '.') {
+                sb.append(c);
+            } else {
+                sb.append('_');
+            }
+        }
+        return sb.toString();
+    }
+
+    /**
+     * 规整 chunkId 为合法路径段（chunk 索引由本服务生成，形如 c0/c1…，仅做基本清洗）。
+     */
+    private static String sanitizeChunkId(String chunkId) {
+        if (chunkId == null || chunkId.isBlank()) {
+            return DEFAULT_PLACEHOLDER;
+        }
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < chunkId.length(); i++) {
+            char c = chunkId.charAt(i);
             if (Character.isLetterOrDigit(c) || c == '-' || c == '_' || c == '.') {
                 sb.append(c);
             } else {

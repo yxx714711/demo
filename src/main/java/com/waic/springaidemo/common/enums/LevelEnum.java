@@ -9,6 +9,7 @@ import lombok.RequiredArgsConstructor;
 @Getter
 @RequiredArgsConstructor
 public enum LevelEnum {
+    CHUNK("chunk"),
     ITEM("item"),
     LANGUAGE("language"),
     CATEGORY("category"),
