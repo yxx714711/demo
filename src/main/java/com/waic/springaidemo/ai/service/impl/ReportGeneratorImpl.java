@@ -45,6 +45,7 @@ public class ReportGeneratorImpl implements ReportGenerator {
     public ReportGeneratorImpl(ChatModel chatModel) {
         this.chatClient = ChatClient.builder(chatModel)
                 .defaultOptions(OllamaChatOptions.builder()
+                        .model("qwen3:4b-instruct-2507-q4_K_M")
                         .temperature(0.5)
                         .disableThinking()
                         .numCtx(16384))

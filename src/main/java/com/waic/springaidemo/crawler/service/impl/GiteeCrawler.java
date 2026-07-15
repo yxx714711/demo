@@ -30,6 +30,7 @@ import java.util.List;
 
 /**
  * Gitee 抓取器
+ * @author 10542
  */
 @Slf4j
 @Component
@@ -73,7 +74,7 @@ public class GiteeCrawler extends AbstractCrawler {
         String url = String.format(EXPLORE_URL, context.getCategory(), context.getLanguage());
         log.info("Crawling Gitee explore: {}", url);
 
-        Document document = pageFetcher.fetchDocumentWithPlaywright(url);
+        Document document = pageFetcher.fetchDocument(url);
         int topN = crawlerProperties.getGitee().getDailyTopN();
 
         List<HotItem> hotItems = new ArrayList<>();

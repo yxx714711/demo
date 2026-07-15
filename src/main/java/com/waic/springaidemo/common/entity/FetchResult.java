@@ -13,6 +13,7 @@ import java.util.List;
 
 /**
  * 抓取结果，对应一个 JSON 文件的数据
+ * @author 10542
  */
 @Data
 @Builder

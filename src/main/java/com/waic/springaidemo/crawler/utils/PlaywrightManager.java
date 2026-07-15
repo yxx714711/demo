@@ -3,12 +3,13 @@ package com.waic.springaidemo.crawler.utils;
 import com.microsoft.playwright.Browser;
 import com.microsoft.playwright.Page;
 import com.microsoft.playwright.Playwright;
+import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 /**
- * Playwright 管理器，用于 Jsoup 抓取失败时的兜底渲染
+ * Playwright 管理器，启动时初始化浏览器并在应用关闭时释放资源。
  */
 @Slf4j
 @Component
@@ -16,6 +17,26 @@ public class PlaywrightManager {
 
     private Playwright playwright;
     private Browser browser;
+
+    /**
+     * 应用启动时初始化 Playwright 浏览器。
+     * 初始化失败会抛出异常，阻断 Spring 容器启动，便于快速发现部署/依赖问题。
+     */
+    @PostConstruct
+    public synchronized void initialize() {
+        if (playwright != null) {
+            return;
+        }
+        log.info("Initializing Playwright chromium browser at startup...");
+        try {
+            playwright = Playwright.create();
+            browser = playwright.chromium().launch();
+            log.info("Playwright chromium browser initialized successfully");
+        } catch (Exception e) {
+            log.error("Failed to initialize Playwright browser at startup", e);
+            throw new IllegalStateException("Failed to initialize Playwright browser at startup", e);
+        }
+    }
 
     /**
      * 使用 Playwright 获取页面完整 HTML
@@ -37,25 +58,19 @@ public class PlaywrightManager {
      * @return 页面 HTML
      */
     public synchronized String fetchHtml(String url, String waitForSelector) {
-        ensureInitialized();
+        if (browser == null) {
+            throw new IllegalStateException("Playwright browser is not initialized");
+        }
         try (Page page = browser.newPage()) {
             page.navigate(url);
             if (waitForSelector != null && !waitForSelector.isBlank()) {
-                // 默认超时 30s，与 Jsoup 超时保持一致；显式等待目标选择器出现，
+                // 默认超时 30s；显式等待目标选择器出现，
                 // 避免 SPA 在 load 事件后异步渲染导致拿到空壳页面。
                 page.waitForSelector(waitForSelector);
             } else {
                 page.waitForLoadState();
             }
             return page.content();
-        }
-    }
-
-    private synchronized void ensureInitialized() {
-        if (playwright == null) {
-            log.info("Initializing Playwright chromium browser...");
-            playwright = Playwright.create();
-            browser = playwright.chromium().launch();
         }
     }
 

@@ -13,6 +13,7 @@ import java.util.Map;
 
 /**
  * 通用热门项
+ * @author 10542
  */
 @Data
 @Builder
@@ -44,6 +45,11 @@ public class HotItem {
      * 周期
      */
     private PeriodEnum period;
+
+    /**
+     * 周期
+     */
+    private PeriodEnum perinnnmlmhod;
 
     /**
      * 分类，不存在时用 _ 占位

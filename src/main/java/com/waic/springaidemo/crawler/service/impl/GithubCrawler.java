@@ -34,6 +34,7 @@ import java.util.List;
 
 /**
  * GitHub 抓取器
+ * @author 10542
  */
 @Slf4j
 @Component
@@ -80,12 +81,13 @@ public class GithubCrawler extends AbstractCrawler {
         String periodParam = mapPeriod(context.getPeriod());
         String langParam = "all".equals(context.getLanguage()) ? "" : context.getLanguage();
         String url = String.format(TRENDING_URL, langParam, periodParam);
-        log.info("Crawling GitHub trending: {}", url);
+        log.info("正在抓取 GitHub 热门仓库: {}", url);
 
-        Document document = pageFetcher.fetchDocument(url, doc -> !doc.select("article.Box-row").isEmpty());
+        Document document = pageFetcher.fetchDocument(url, "article.Box-row",
+                doc -> !doc.select("article.Box-row").isEmpty());
         Elements rows = document.select("article.Box-row");
         if (rows.isEmpty()) {
-            log.warn("No trending items found for url: {}", url);
+            log.warn("未找到热门项目，URL: {}", url);
         }
 
         List<HotItem> items = new ArrayList<>();
@@ -160,7 +162,7 @@ public class GithubCrawler extends AbstractCrawler {
         if (tryDownloadViaApi(owner, repo, item, context)) {
             return;
         }
-        log.warn("GitHub API failed for {}/{}, falling back to raw URL", owner, repo);
+        log.warn("GitHub API 获取 {}/{} 失败，降级使用 raw URL", owner, repo);
 
         if (tryDownloadViaRaw(owner, repo, item, context)) {
             return;
@@ -306,7 +308,7 @@ public class GithubCrawler extends AbstractCrawler {
         Files.createDirectories(contentFilePath.getParent());
         Files.writeString(contentFilePath, content);
         item.setContentPath(contentFilePath.toString().replace("\\", "/"));
-        log.info("Downloaded README for {} to {}", item.getTitle(), item.getContentPath());
+        log.info("已下载 README：{}，保存至 {}", item.getTitle(), item.getContentPath());
     }
 
     private String extractApiContent(String body) {
@@ -323,7 +325,7 @@ public class GithubCrawler extends AbstractCrawler {
             content = content.replaceAll("\\s+", "");
             return new String(Base64.getDecoder().decode(content), StandardCharsets.UTF_8);
         } catch (Exception e) {
-            log.warn("Failed to parse GitHub API README content", e);
+            log.warn("解析 GitHub API README 内容失败", e);
             return null;
         }
     }
@@ -336,7 +338,7 @@ public class GithubCrawler extends AbstractCrawler {
                 return downloadUrl.asString("");
             }
         } catch (Exception e) {
-            log.warn("Failed to parse GitHub API download_url", e);
+            log.warn("解析 GitHub API download_url 失败", e);
         }
         return null;
     }
@@ -367,7 +369,7 @@ public class GithubCrawler extends AbstractCrawler {
                 }
             }
         }
-        log.warn("GitHub rate limited, backing off {}ms before retry #{}", delayMs, attempt);
+        log.warn("GitHub 触发限流，等待 {}ms 后进行第 {} 次重试", delayMs, attempt);
         try {
             Thread.sleep(delayMs);
         } catch (InterruptedException e) {

@@ -68,7 +68,7 @@ public class JuejinCrawler extends AbstractCrawler {
 
         // 掘金为 Nuxt SSR/SPA，Jsoup 直连会被反爬返回空壳，故直接走 Playwright，
         // 并显式等待列表选择器出现后再取内容（避免 waitForLoadState 过早返回空壳）。
-        Document document = pageFetcher.fetchDocumentWithPlaywright(url, "a.article-item-link");
+        Document document = pageFetcher.fetchDocument(url, "a.article-item-link", null);
         Elements items = document.select("a.article-item-link");
         if (items.isEmpty()) {
             log.warn("No Juejin items found for url: {}", url);
@@ -134,7 +134,7 @@ public class JuejinCrawler extends AbstractCrawler {
     @Override
     public void download(HotItem item, CrawlerContext context) throws IOException {
         // 详情页同样走 Playwright，并等待正文容器 #article-root 渲染完成。
-        Document document = pageFetcher.fetchDocumentWithPlaywright(item.getUrl(), "#article-root");
+        Document document = pageFetcher.fetchDocument(item.getUrl(), "#article-root", null);
         Element articleElement = document.selectFirst("#article-root");
         if (articleElement == null) {
             log.warn("Article content not found for url: {}", item.getUrl());
