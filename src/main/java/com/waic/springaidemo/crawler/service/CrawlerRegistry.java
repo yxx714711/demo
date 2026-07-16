@@ -1,20 +1,20 @@
 package com.waic.springaidemo.crawler.service;
 
+import com.waic.springaidemo.common.entity.FetchRequest;
 import com.waic.springaidemo.common.entity.FetchResult;
 import com.waic.springaidemo.common.enums.DataSourceEnum;
 import com.waic.springaidemo.common.enums.PeriodEnum;
-import com.waic.springaidemo.crawler.entity.CrawlerContext;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
-import java.time.LocalDate;
-import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
-import java.util.function.Predicate;
+import java.util.Optional;
 
 /**
- * 抓取器注册中心
+ * 抓取器注册中心（纯定位器）：持有全部 Crawler 并负责按请求/结果定位。
+ * 抓取与下载的编排由上层 pipeline 完成，本类不再执行 crawl。
  */
 @Slf4j
 @Component
@@ -24,83 +24,46 @@ public class CrawlerRegistry {
     private final List<Crawler> crawlers;
 
     /**
-     * 根据上下文获取支持的抓取器
+     * 返回全部已注册抓取器（只读）。供上层遍历 buildContexts / crawl 使用。
      *
-     * @param context 抓取上下文
-     * @return 抓取器
+     * @return 抓取器列表（不可修改）
      */
-    public Crawler resolve(CrawlerContext context) {
+    public List<Crawler> getAllCrawlers() {
+        return Collections.unmodifiableList(crawlers);
+    }
+
+    /**
+     * 根据请求查找支持的抓取器（列表侧）。
+     * 无匹配时返回 empty，由调用方决定是优雅跳过还是抛异常。
+     *
+     * @param request 抓取请求
+     * @return 抓取器（可能为 empty）
+     */
+    public Optional<Crawler> resolve(FetchRequest request) {
         for (Crawler crawler : crawlers) {
-            if (crawler.supports(context)) {
-                return crawler;
+            if (crawler.supports(request)) {
+                return Optional.of(crawler);
             }
         }
-        throw new IllegalStateException("No crawler supports context: " + context);
+        return Optional.empty();
     }
 
     /**
-     * 执行指定日期和周期下的所有抓取任务
+     * 根据已落盘的抓取结果反查对应的抓取器（用于正文下载）。
+     * 内部以结果重建 FetchRequest 后复用 {@link #resolve(FetchRequest)} 的定位逻辑。
+     * 若无可下载的数据源（如纯列表源）返回 empty，由调用方优雅跳过。
      *
-     * @param date   日期
-     * @param period 周期
-     * @return 所有抓取结果
+     * @param result 抓取结果
+     * @return 抓取器（可能为 empty）
      */
-    public List<FetchResult> crawlAll(LocalDate date, PeriodEnum period) {
-        return crawl(date, period, crawler -> true, null);
-    }
-
-    /**
-     * 抓取指定数据源、日期、周期下的所有上下文。
-     * 若没有任何 crawler 支持该 (source, period) 组合，抛出 IllegalStateException；
-     * 单个上下文抓取失败时会跳过该上下文并继续，不影响其他上下文。
-     *
-     * @param source 数据源
-     * @param date   日期
-     * @param period 周期
-     * @return 抓取结果列表
-     */
-    public List<FetchResult> crawlBySource(DataSourceEnum source, LocalDate date, PeriodEnum period) {
-        CrawlerContext probe = CrawlerContext.builder()
-                .source(source)
-                .period(period)
-                .date(date)
+    public Optional<Crawler> resolve(FetchResult result) {
+        FetchRequest request = FetchRequest.builder()
+                .source(result.getSource())
+                .period(result.getPeriod())
+                .date(result.getDate())
+                .category(result.getCategory())
+                .language(result.getLanguage())
                 .build();
-        return crawl(date, period, crawler -> crawler.supports(probe),
-                "No crawler supports source=" + source + ", period=" + period);
-    }
-
-    /**
-     * 通用抓取方法：对通过 crawlerFilter 的抓取器，遍历其 buildContexts 产出的上下文并执行抓取。
-     * buildContexts 已保证只返回受支持的上下文，故此处不再逐个做 supports 过滤。
-     * 单个上下文抓取失败时跳过并继续，不影响其他上下文。
-     *
-     * @param date           日期
-     * @param period         周期
-     * @param crawlerFilter  抓取器过滤器，决定哪些抓取器参与本次抓取
-     * @param noMatchMessage 当没有任何抓取器通过过滤时抛出的异常信息；为 null 表示不抛异常
-     * @return 抓取结果列表
-     */
-    private List<FetchResult> crawl(LocalDate date, PeriodEnum period,
-                                    Predicate<Crawler> crawlerFilter, String noMatchMessage) {
-        List<FetchResult> results = new ArrayList<>();
-        boolean anyMatched = false;
-        for (Crawler crawler : crawlers) {
-            if (!crawlerFilter.test(crawler)) {
-                continue;
-            }
-            anyMatched = true;
-            for (CrawlerContext context : crawler.buildContexts(date, period)) {
-                try {
-                    results.add(crawler.crawl(context));
-                } catch (Exception e) {
-                    log.warn("Crawl failed for {} context={}, skipping",
-                            crawler.getClass().getSimpleName(), context, e);
-                }
-            }
-        }
-        if (noMatchMessage != null && !anyMatched) {
-            throw new IllegalStateException(noMatchMessage);
-        }
-        return results;
+        return resolve(request);
     }
 }

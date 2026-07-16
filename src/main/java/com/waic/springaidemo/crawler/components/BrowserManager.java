@@ -1,4 +1,4 @@
-package com.waic.springaidemo.crawler.utils;
+package com.waic.springaidemo.crawler.components;
 
 import com.microsoft.playwright.Browser;
 import com.microsoft.playwright.Page;
@@ -8,12 +8,15 @@ import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
+import java.util.function.Function;
+
 /**
- * Playwright 管理器，启动时初始化浏览器并在应用关闭时释放资源。
+ * 浏览器管理器，仅负责 Playwright/Browser 的创建、销毁与页面生命周期维护。
+ * 具体的抓取逻辑（导航、等待、取内容）由调用方通过 {@link #withPage(Function)} 提供。
  */
 @Slf4j
 @Component
-public class PlaywrightManager {
+public class BrowserManager {
 
     private Playwright playwright;
     private Browser browser;
@@ -23,7 +26,7 @@ public class PlaywrightManager {
      * 初始化失败会抛出异常，阻断 Spring 容器启动，便于快速发现部署/依赖问题。
      */
     @PostConstruct
-    public synchronized void initialize() {
+    public void initialize() {
         if (playwright != null) {
             return;
         }
@@ -39,43 +42,24 @@ public class PlaywrightManager {
     }
 
     /**
-     * 使用 Playwright 获取页面完整 HTML
+     * 打开一个新页面供 action 使用，action 执行完毕后自动关闭页面。
+     * 页面的创建与销毁完全收口在本方法内，调用方只需关注"拿到 page 后做什么"。
      *
-     * @param url 目标 URL
-     * @return 页面 HTML
+     * @param action 在页面上执行的操作，返回抓取结果
+     * @param <T>    结果类型
+     * @return action 的执行结果
      */
-    public synchronized String fetchHtml(String url) {
-        return fetchHtml(url, null);
-    }
-
-    /**
-     * 使用 Playwright 获取页面完整 HTML。
-     * 若指定 waitForSelector，则等待该选择器出现后再取内容（适用于 JS/SPA 站点，
-     * 避免 waitForLoadState 在内容异步渲染完成前就返回空壳）。
-     *
-     * @param url            目标 URL
-     * @param waitForSelector 需等待出现的 CSS 选择器，为 null 或空白时退化为等待 load 事件
-     * @return 页面 HTML
-     */
-    public synchronized String fetchHtml(String url, String waitForSelector) {
+    public <T> T withPage(Function<Page, T> action) {
         if (browser == null) {
             throw new IllegalStateException("Playwright browser is not initialized");
         }
         try (Page page = browser.newPage()) {
-            page.navigate(url);
-            if (waitForSelector != null && !waitForSelector.isBlank()) {
-                // 默认超时 30s；显式等待目标选择器出现，
-                // 避免 SPA 在 load 事件后异步渲染导致拿到空壳页面。
-                page.waitForSelector(waitForSelector);
-            } else {
-                page.waitForLoadState();
-            }
-            return page.content();
+            return action.apply(page);
         }
     }
 
     @PreDestroy
-    public synchronized void destroy() {
+    public void destroy() {
         log.info("Closing Playwright resources");
         if (browser != null) {
             browser.close();

@@ -1,4 +1,4 @@
-package com.waic.springaidemo.crawler.entity;
+package com.waic.springaidemo.common.entity;
 
 import com.waic.springaidemo.common.enums.DataSourceEnum;
 import com.waic.springaidemo.common.enums.PeriodEnum;
@@ -10,13 +10,14 @@ import lombok.NoArgsConstructor;
 import java.time.LocalDate;
 
 /**
- * 抓取上下文
+ * 抓取请求规格（crawl 的输入），与 {@link FetchResult} 成对：
+ * 一个 FetchRequest 经 crawl 产生一个 FetchResult。
  */
 @Data
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-public class CrawlerContext {
+public class FetchRequest {
 
     /**
      * 数据源
@@ -34,12 +35,12 @@ public class CrawlerContext {
     private LocalDate date;
 
     /**
-     * 分类
+     * 分类，不存在时用 _ 占位
      */
     private String category;
 
     /**
-     * 语言
+     * 语言，不存在时用 _ 占位
      */
     private String language;
 }

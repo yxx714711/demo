@@ -2,6 +2,7 @@ package com.waic.springaidemo.crawler.utils;
 
 import io.github.furstenheim.CopyDown;
 import io.github.furstenheim.OptionsBuilder;
+import lombok.NoArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.jsoup.nodes.Element;
 
@@ -10,12 +11,10 @@ import org.jsoup.nodes.Element;
  * 转换前先剥离 UI 噪声（style/script/svg/代码块头部等），失败或结果为空时回退纯文本。
  */
 @Slf4j
-public final class HtmlToMarkdown {
+@NoArgsConstructor
+public final class Html2MarkdownUtil {
 
     private static final CopyDown COPY_DOWN = new CopyDown(OptionsBuilder.anOptions().build());
-
-    private HtmlToMarkdown() {
-    }
 
     /**
      * 将 HTML 元素转换为 Markdown。

@@ -1,13 +1,14 @@
 package com.waic.springaidemo.crawler.service.impl;
 
 import com.waic.springaidemo.crawler.config.CrawlerProperties;
+import com.waic.springaidemo.common.entity.FetchRequest;
 import com.waic.springaidemo.common.entity.FetchResult;
 import com.waic.springaidemo.common.entity.HotItem;
 import com.waic.springaidemo.common.enums.DataSourceEnum;
 import com.waic.springaidemo.common.enums.PeriodEnum;
 import com.waic.springaidemo.common.utils.FilePathUtils;
-import com.waic.springaidemo.crawler.entity.CrawlerContext;
-import com.waic.springaidemo.crawler.utils.PageFetcher;
+import com.waic.springaidemo.crawler.service.Crawler;
+import com.waic.springaidemo.crawler.utils.PageFetcherUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.jsoup.nodes.Document;
@@ -39,51 +40,49 @@ import java.util.List;
 @Slf4j
 @Component
 @RequiredArgsConstructor
-public class GithubCrawler extends AbstractCrawler {
+public class GithubCrawler implements Crawler {
 
     private static final String TRENDING_URL = "https://github.com/trending/%s?since=%s";
     private static final String API_README_URL = "https://api.github.com/repos/%s/%s/readme";
-    private static final String RAW_README_URL = "https://raw.githubusercontent.com/%s/%s/%s/README.md";
     private static final String USER_AGENT = "Mozilla/5.0";
-    private static final List<String> SUPPORTED_README_BRANCHES = Arrays.asList("main", "master");
     private static final int[] RETRYABLE_STATUS = {429, 500, 502, 503, 504};
 
     private final CrawlerProperties crawlerProperties;
-    private final PageFetcher pageFetcher;
+    private final PageFetcherUtil pageFetcherUtil;
     private final HttpClient httpClient = HttpClient.newBuilder().followRedirects(HttpClient.Redirect.NORMAL).build();
     // API 调用不自动跟随重定向，以便手动处理 302 到大文件 download_url 的情况
     private final HttpClient apiClient = HttpClient.newBuilder().followRedirects(HttpClient.Redirect.NEVER).build();
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Override
-    protected DataSourceEnum getDataSource() {
+    public DataSourceEnum getDataSource() {
         return DataSourceEnum.GITHUB;
     }
 
     @Override
-    protected List<PeriodEnum> getSupportedPeriods() {
+    public List<PeriodEnum> getSupportedPeriods() {
         return Arrays.asList(PeriodEnum.DAILY, PeriodEnum.WEEKLY, PeriodEnum.MONTHLY);
     }
 
     @Override
-    protected List<String> getCategories() {
+    public List<String> getCategories() {
         return new ArrayList<>();
     }
 
     @Override
-    protected List<String> getLanguages() {
+    public List<String> getLanguages() {
         List<String> languages = crawlerProperties.getGithub().getLanguages();
         return CollectionUtils.isEmpty(languages) ? List.of("all") : languages;
     }
 
     @Override
-    public FetchResult crawl(CrawlerContext context) {
+    public FetchResult crawl(FetchRequest context) {
         String periodParam = mapPeriod(context.getPeriod());
         String langParam = "all".equals(context.getLanguage()) ? "" : context.getLanguage();
         String url = String.format(TRENDING_URL, langParam, periodParam);
         log.info("正在抓取 GitHub 热门仓库: {}", url);
 
-        Document document = pageFetcher.fetchDocument(url, "article.Box-row",
+        Document document = pageFetcherUtil.fetchDocument(url, "article.Box-row",
                 doc -> !doc.select("article.Box-row").isEmpty());
         Elements rows = document.select("article.Box-row");
         if (rows.isEmpty()) {
@@ -115,7 +114,7 @@ public class GithubCrawler extends AbstractCrawler {
                 .build();
     }
 
-    private HotItem parseRow(Element row, CrawlerContext context) {
+    private HotItem parseRow(Element row, FetchRequest context) {
         Element linkElement = row.selectFirst("h2 a");
         if (linkElement == null) {
             return null;
@@ -147,10 +146,7 @@ public class GithubCrawler extends AbstractCrawler {
     }
 
     @Override
-    public void download(HotItem item, CrawlerContext context) throws IOException {
-        // 不同 item 之间的节流，降低被 GitHub 限流的概率
-        sleepThrottle();
-
+    public void download(HotItem item, FetchResult result) throws IOException {
         String repoPath = item.getUrl().replace("https://github.com/", "");
         String[] parts = repoPath.split("/");
         if (parts.length < 2) {
@@ -159,26 +155,21 @@ public class GithubCrawler extends AbstractCrawler {
         String owner = parts[0];
         String repo = parts[1];
 
-        if (tryDownloadViaApi(owner, repo, item, context)) {
-            return;
-        }
-        log.warn("GitHub API 获取 {}/{} 失败，降级使用 raw URL", owner, repo);
-
-        if (tryDownloadViaRaw(owner, repo, item, context)) {
+        if (tryDownloadViaApi(owner, repo, item, result)) {
             return;
         }
         throw new IOException("Failed to download README for " + item.getTitle()
-                + " (API and raw both failed): " + item.getUrl());
+                + " (API failed): " + item.getUrl());
     }
 
     /**
      * 主路径：GitHub Contents API，自动解析默认分支与 README 文件名。
      * 200 且 content 非空 -> base64 解码写入；302 或 content 为空但有 download_url -> 直接取该 raw 地址。
-     * 429/5xx/网络异常 -> 指数退避重试；404/400/403(非限流) -> 直接降级到 raw。
+     * 429/5xx/网络异常 -> 重试；404/400/403(非限流) -> 直接结束。
      */
-    private boolean tryDownloadViaApi(String owner, String repo, HotItem item, CrawlerContext context) throws IOException {
+    private boolean tryDownloadViaApi(String owner, String repo, HotItem item, FetchResult result) throws IOException {
         String url = String.format(API_README_URL, owner, repo);
-        int maxRetries = getApiRetryMax();
+        int maxRetries = 3;
         int attempt = 0;
         while (true) {
             try {
@@ -186,35 +177,30 @@ public class GithubCrawler extends AbstractCrawler {
                         .header("User-Agent", USER_AGENT)
                         .header("Accept", "application/vnd.github+json")
                         .GET();
-                String token = crawlerProperties.getGithub().getToken();
-                if (token != null && !token.isBlank()) {
-                    builder.header("Authorization", "Bearer " + token);
-                }
                 HttpResponse<String> response = apiClient.send(builder.build(), HttpResponse.BodyHandlers.ofString());
                 int code = response.statusCode();
                 if (code == 200) {
                     String content = extractApiContent(response.body());
                     if (content != null) {
-                        saveContent(content, item, context);
+                        saveContent(content, item, result);
                         return true;
                     }
                     String downloadUrl = extractApiDownloadUrl(response.body());
                     if (downloadUrl != null) {
-                        return fetchRawAndSave(downloadUrl, item, context);
+                        return fetchRawAndSave(downloadUrl, item, result);
                     }
                     return false;
                 }
                 if (code == 301 || code == 302) {
                     String location = response.headers().firstValue("Location").orElse(null);
                     if (location != null) {
-                        return fetchRawAndSave(location, item, context);
+                        return fetchRawAndSave(location, item, result);
                     }
                     return false;
                 }
                 if (isRetryable(code, response)) {
                     if (attempt < maxRetries) {
                         attempt++;
-                        sleepBackoff(response, attempt);
                         continue;
                     }
                     return false;
@@ -226,7 +212,6 @@ public class GithubCrawler extends AbstractCrawler {
             } catch (IOException e) {
                 if (attempt < maxRetries) {
                     attempt++;
-                    sleepBackoff(null, attempt);
                     continue;
                 }
                 return false;
@@ -235,55 +220,9 @@ public class GithubCrawler extends AbstractCrawler {
     }
 
     /**
-     * 兜底路径：raw.githubusercontent.com，按分支顺序尝试 README.md。
-     * 429/5xx/网络异常 -> 退避重试；404 等非可重试错误 -> 立即尝试下一分支，不消耗退避。
-     */
-    private boolean tryDownloadViaRaw(String owner, String repo, HotItem item, CrawlerContext context) throws IOException {
-        int maxRetries = getApiRetryMax();
-        for (String branch : SUPPORTED_README_BRANCHES) {
-            String url = String.format(RAW_README_URL, owner, repo, branch);
-            int attempt = 0;
-            while (true) {
-                try {
-                    HttpRequest request = HttpRequest.newBuilder(URI.create(url))
-                            .header("User-Agent", USER_AGENT)
-                            .GET()
-                            .build();
-                    HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-                    int code = response.statusCode();
-                    if (code == 200) {
-                        saveContent(response.body(), item, context);
-                        return true;
-                    }
-                    if (isRetryable(code, response)) {
-                        if (attempt < maxRetries) {
-                            attempt++;
-                            sleepBackoff(response, attempt);
-                            continue;
-                        }
-                        break;
-                    }
-                    break;
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    throw new IOException("Interrupted while downloading README from " + url, e);
-                } catch (IOException e) {
-                    if (attempt < maxRetries) {
-                        attempt++;
-                        sleepBackoff(null, attempt);
-                        continue;
-                    }
-                    break;
-                }
-            }
-        }
-        return false;
-    }
-
-    /**
      * 对给定 raw 地址做一次 GET 并尝试保存（用于 API 重定向 / download_url 场景，不再重试）
      */
-    private boolean fetchRawAndSave(String url, HotItem item, CrawlerContext context) throws IOException {
+    private boolean fetchRawAndSave(String url, HotItem item, FetchResult result) throws IOException {
         try {
             HttpRequest request = HttpRequest.newBuilder(URI.create(url))
                     .header("User-Agent", USER_AGENT)
@@ -291,7 +230,7 @@ public class GithubCrawler extends AbstractCrawler {
                     .build();
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
             if (response.statusCode() == 200) {
-                saveContent(response.body(), item, context);
+                saveContent(response.body(), item, result);
                 return true;
             }
             return false;
@@ -301,10 +240,10 @@ public class GithubCrawler extends AbstractCrawler {
         }
     }
 
-    private void saveContent(String content, HotItem item, CrawlerContext context) throws IOException {
+    private void saveContent(String content, HotItem item, FetchResult result) throws IOException {
         String repoPath = item.getUrl().replace("https://github.com/", "").replace("/", "_");
-        Path contentFilePath = FilePathUtils.getContentFilePath(context.getSource(), context.getPeriod(),
-                context.getDate(), context.getCategory(), context.getLanguage(), repoPath);
+        Path contentFilePath = FilePathUtils.getContentFilePath(result.getSource(), result.getPeriod(),
+                result.getDate(), result.getCategory(), result.getLanguage(), repoPath);
         Files.createDirectories(contentFilePath.getParent());
         Files.writeString(contentFilePath, content);
         item.setContentPath(contentFilePath.toString().replace("\\", "/"));
@@ -354,55 +293,6 @@ public class GithubCrawler extends AbstractCrawler {
             return response != null && response.headers().firstValue("Retry-After").isPresent();
         }
         return false;
-    }
-
-    private void sleepBackoff(HttpResponse<String> response, int attempt) throws IOException {
-        long delayMs = getApiRetryBaseMs();
-        if (response != null) {
-            String retryAfter = response.headers().firstValue("Retry-After").orElse(null);
-            if (retryAfter != null) {
-                try {
-                    long secs = Long.parseLong(retryAfter.trim());
-                    delayMs = Math.max(delayMs, secs * 1000);
-                } catch (NumberFormatException ignored) {
-                    // 非数字格式（如 HTTP 日期）时忽略，沿用基础退避
-                }
-            }
-        }
-        log.warn("GitHub 触发限流，等待 {}ms 后进行第 {} 次重试", delayMs, attempt);
-        try {
-            Thread.sleep(delayMs);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new IOException("Interrupted during backoff", e);
-        }
-    }
-
-    private void sleepThrottle() {
-        long ms = getThrottleMs();
-        if (ms <= 0) {
-            return;
-        }
-        try {
-            Thread.sleep(ms);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        }
-    }
-
-    private int getApiRetryMax() {
-        Integer v = crawlerProperties.getGithub().getApiRetryMax();
-        return v == null ? 3 : v;
-    }
-
-    private long getApiRetryBaseMs() {
-        Integer v = crawlerProperties.getGithub().getApiRetryBaseMs();
-        return v == null ? 30000L : v;
-    }
-
-    private long getThrottleMs() {
-        Integer v = crawlerProperties.getGithub().getThrottleMs();
-        return v == null ? 800L : v;
     }
 
     private String mapPeriod(PeriodEnum period) {

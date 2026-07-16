@@ -1,13 +1,14 @@
 package com.waic.springaidemo.crawler.service.impl;
 
 import com.waic.springaidemo.crawler.config.CrawlerProperties;
+import com.waic.springaidemo.common.entity.FetchRequest;
 import com.waic.springaidemo.common.entity.FetchResult;
 import com.waic.springaidemo.common.entity.HotItem;
 import com.waic.springaidemo.common.enums.DataSourceEnum;
 import com.waic.springaidemo.common.enums.PeriodEnum;
 import com.waic.springaidemo.common.utils.FilePathUtils;
-import com.waic.springaidemo.crawler.entity.CrawlerContext;
-import com.waic.springaidemo.crawler.utils.PageFetcher;
+import com.waic.springaidemo.crawler.service.Crawler;
+import com.waic.springaidemo.crawler.utils.PageFetcherUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.jsoup.nodes.Document;
@@ -35,7 +36,7 @@ import java.util.List;
 @Slf4j
 @Component
 @RequiredArgsConstructor
-public class GiteeCrawler extends AbstractCrawler {
+public class GiteeCrawler implements Crawler {
 
     private static final String EXPLORE_URL = "https://gitee.com/explore/%s?lang=%s&type=hot";
     private static final List<String> SUPPORTED_README_BRANCHES = Arrays.asList("master", "main");
@@ -44,37 +45,37 @@ public class GiteeCrawler extends AbstractCrawler {
     private static final String WEEKLY_TAB_SELECTOR = "[data-tab='weekly-trending'] .explore-trending-projects__list-item";
 
     private final CrawlerProperties crawlerProperties;
-    private final PageFetcher pageFetcher;
+    private final PageFetcherUtil pageFetcherUtil;
     private final HttpClient httpClient = HttpClient.newBuilder().followRedirects(HttpClient.Redirect.NORMAL).build();
 
     @Override
-    protected DataSourceEnum getDataSource() {
+    public DataSourceEnum getDataSource() {
         return DataSourceEnum.GITEE;
     }
 
     @Override
-    protected List<PeriodEnum> getSupportedPeriods() {
+    public List<PeriodEnum> getSupportedPeriods() {
         return List.of(PeriodEnum.DAILY);
     }
 
     @Override
-    protected List<String> getCategories() {
+    public List<String> getCategories() {
         List<String> categories = crawlerProperties.getGitee().getCategories();
         return CollectionUtils.isEmpty(categories) ? List.of("all") : categories;
     }
 
     @Override
-    protected List<String> getLanguages() {
+    public List<String> getLanguages() {
         List<String> languages = crawlerProperties.getGitee().getLanguages();
         return CollectionUtils.isEmpty(languages) ? List.of("all") : languages;
     }
 
     @Override
-    public FetchResult crawl(CrawlerContext context) {
+    public FetchResult crawl(FetchRequest context) {
         String url = String.format(EXPLORE_URL, context.getCategory(), context.getLanguage());
         log.info("Crawling Gitee explore: {}", url);
 
-        Document document = pageFetcher.fetchDocument(url);
+        Document document = pageFetcherUtil.fetchDocument(url);
         int topN = crawlerProperties.getGitee().getDailyTopN();
 
         List<HotItem> hotItems = new ArrayList<>();
@@ -95,7 +96,7 @@ public class GiteeCrawler extends AbstractCrawler {
      * 解析指定 tab 下的热门项目列表，结果追加到 hotItems
      */
     private void parseTabItems(Document document, String selector, PeriodEnum period, int topN,
-                               CrawlerContext context, List<HotItem> hotItems) {
+                               FetchRequest context, List<HotItem> hotItems) {
         Elements items = document.select(selector);
         if (items.isEmpty()) {
             log.warn("No Gitee trending items found for url period: {}", period);
@@ -115,7 +116,7 @@ public class GiteeCrawler extends AbstractCrawler {
         }
     }
 
-    private HotItem parseItem(Element itemElement, CrawlerContext context, PeriodEnum period) {
+    private HotItem parseItem(Element itemElement, FetchRequest context, PeriodEnum period) {
         Element linkElement = itemElement.selectFirst(".title a");
         if (linkElement == null) {
             return null;
@@ -147,7 +148,7 @@ public class GiteeCrawler extends AbstractCrawler {
     }
 
     @Override
-    public void download(HotItem item, CrawlerContext context) throws IOException {
+    public void download(HotItem item, FetchResult result) throws IOException {
         String repoPath = item.getUrl().replace("https://gitee.com/", "");
         String[] parts = repoPath.split("/");
         if (parts.length < 2) {
@@ -167,8 +168,8 @@ public class GiteeCrawler extends AbstractCrawler {
                 if (response.statusCode() == 200) {
                     String content = response.body();
                     String slug = owner + "_" + repo;
-                    Path contentFilePath = FilePathUtils.getContentFilePath(context.getSource(), context.getPeriod(),
-                            context.getDate(), context.getCategory(), context.getLanguage(), slug);
+                    Path contentFilePath = FilePathUtils.getContentFilePath(result.getSource(), result.getPeriod(),
+                            result.getDate(), result.getCategory(), result.getLanguage(), slug);
                     Files.createDirectories(contentFilePath.getParent());
                     Files.writeString(contentFilePath, content);
                     item.setContentPath(contentFilePath.toString().replace("\\", "/"));

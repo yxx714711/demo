@@ -1,14 +1,15 @@
 package com.waic.springaidemo.crawler.service.impl;
 
 import com.waic.springaidemo.crawler.config.CrawlerProperties;
+import com.waic.springaidemo.common.entity.FetchRequest;
 import com.waic.springaidemo.common.entity.FetchResult;
 import com.waic.springaidemo.common.entity.HotItem;
 import com.waic.springaidemo.common.enums.DataSourceEnum;
 import com.waic.springaidemo.common.enums.PeriodEnum;
 import com.waic.springaidemo.common.utils.FilePathUtils;
-import com.waic.springaidemo.crawler.entity.CrawlerContext;
-import com.waic.springaidemo.crawler.utils.HtmlToMarkdown;
-import com.waic.springaidemo.crawler.utils.PageFetcher;
+import com.waic.springaidemo.crawler.service.Crawler;
+import com.waic.springaidemo.crawler.utils.Html2MarkdownUtil;
+import com.waic.springaidemo.crawler.utils.PageFetcherUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.jsoup.nodes.Document;
@@ -30,37 +31,37 @@ import java.util.List;
 @Slf4j
 @Component
 @RequiredArgsConstructor
-public class JuejinCrawler extends AbstractCrawler {
+public class JuejinCrawler implements Crawler {
 
     private static final String HOT_URL = "https://juejin.cn/hot/articles/%s";
     private static final String HOT_URL_ALL = "https://juejin.cn/hot/articles";
 
     private final CrawlerProperties crawlerProperties;
-    private final PageFetcher pageFetcher;
+    private final PageFetcherUtil pageFetcherUtil;
 
     @Override
-    protected DataSourceEnum getDataSource() {
+    public DataSourceEnum getDataSource() {
         return DataSourceEnum.JUEJIN;
     }
 
     @Override
-    protected List<PeriodEnum> getSupportedPeriods() {
+    public List<PeriodEnum> getSupportedPeriods() {
         return List.of(PeriodEnum.DAILY);
     }
 
     @Override
-    protected List<String> getCategories() {
+    public List<String> getCategories() {
         List<String> categories = crawlerProperties.getJuejin().getCategories();
         return CollectionUtils.isEmpty(categories) ? List.of("all") : categories;
     }
 
     @Override
-    protected List<String> getLanguages() {
+    public List<String> getLanguages() {
         return new ArrayList<>();
     }
 
     @Override
-    public FetchResult crawl(CrawlerContext context) {
+    public FetchResult crawl(FetchRequest context) {
         String url = "all".equals(context.getCategory())
                 ? HOT_URL_ALL
                 : String.format(HOT_URL, context.getCategory());
@@ -68,7 +69,7 @@ public class JuejinCrawler extends AbstractCrawler {
 
         // 掘金为 Nuxt SSR/SPA，Jsoup 直连会被反爬返回空壳，故直接走 Playwright，
         // 并显式等待列表选择器出现后再取内容（避免 waitForLoadState 过早返回空壳）。
-        Document document = pageFetcher.fetchDocument(url, "a.article-item-link", null);
+        Document document = pageFetcherUtil.fetchDocument(url, "a.article-item-link", null);
         Elements items = document.select("a.article-item-link");
         if (items.isEmpty()) {
             log.warn("No Juejin items found for url: {}", url);
@@ -99,7 +100,7 @@ public class JuejinCrawler extends AbstractCrawler {
                 .build();
     }
 
-    private HotItem parseItem(Element itemElement, CrawlerContext context) {
+    private HotItem parseItem(Element itemElement, FetchRequest context) {
         // itemElement 本身就是 a.article-item-link，href 即文章链接
         String relativeUrl = itemElement.attr("href");
         if (relativeUrl.isBlank()) {
@@ -132,24 +133,24 @@ public class JuejinCrawler extends AbstractCrawler {
     }
 
     @Override
-    public void download(HotItem item, CrawlerContext context) throws IOException {
+    public void download(HotItem item, FetchResult result) throws IOException {
         // 详情页同样走 Playwright，并等待正文容器 #article-root 渲染完成。
-        Document document = pageFetcher.fetchDocument(item.getUrl(), "#article-root", null);
+        Document document = pageFetcherUtil.fetchDocument(item.getUrl(), "#article-root", null);
         Element articleElement = document.selectFirst("#article-root");
         if (articleElement == null) {
             log.warn("Article content not found for url: {}", item.getUrl());
             item.setContentPath("");
             return;
         }
-        String content = HtmlToMarkdown.convert(articleElement);
+        String content = Html2MarkdownUtil.convert(articleElement);
         if (content.isBlank()) {
             log.warn("Article content is blank for url: {}", item.getUrl());
             item.setContentPath("");
             return;
         }
         String slug = extractSlug(item.getUrl());
-        Path contentFilePath = FilePathUtils.getContentFilePath(context.getSource(), context.getPeriod(),
-                context.getDate(), context.getCategory(), context.getLanguage(), slug);
+        Path contentFilePath = FilePathUtils.getContentFilePath(result.getSource(), result.getPeriod(),
+                result.getDate(), result.getCategory(), result.getLanguage(), slug);
         Files.createDirectories(contentFilePath.getParent());
         Files.writeString(contentFilePath, content);
         item.setContentPath(contentFilePath.toString().replace("\\", "/"));

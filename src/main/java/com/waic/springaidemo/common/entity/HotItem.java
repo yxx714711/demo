@@ -47,11 +47,6 @@ public class HotItem {
     private PeriodEnum period;
 
     /**
-     * 周期
-     */
-    private PeriodEnum perinnnmlmhod;
-
-    /**
      * 分类，不存在时用 _ 占位
      */
     private String category;

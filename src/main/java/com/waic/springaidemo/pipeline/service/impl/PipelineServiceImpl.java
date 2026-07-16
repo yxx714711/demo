@@ -10,8 +10,8 @@ import com.waic.springaidemo.common.entity.SummaryKey;
 import com.waic.springaidemo.common.enums.DataSourceEnum;
 import com.waic.springaidemo.common.enums.LevelEnum;
 import com.waic.springaidemo.common.enums.PeriodEnum;
+import com.waic.springaidemo.common.entity.FetchRequest;
 import com.waic.springaidemo.common.utils.TextSplitter;
-import com.waic.springaidemo.crawler.entity.CrawlerContext;
 import com.waic.springaidemo.crawler.service.Crawler;
 import com.waic.springaidemo.crawler.service.CrawlerRegistry;
 import com.waic.springaidemo.persistence.service.FetchResultRepository;
@@ -34,6 +34,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Predicate;
 
 /**
  * Pipeline 编排服务实现
@@ -46,8 +47,8 @@ import java.util.concurrent.atomic.AtomicReference;
 public class PipelineServiceImpl implements PipelineService {
 
     private static final int ITEM_MAX_CHARS = 2000;        // D3：ITEM 合并层输出上限（单篇一摘要）
-    private static final int CHUNK_MAX_INPUT_CHARS = 5000;   // 单块切片输入上限（同时也是触发切片阈值）
-    private static final int CHUNK_MAX_OUTPUT_CHARS = 1000;  // 单块（CHUNK）总结输出上限
+    private static final int CHUNK_MAX_INPUT_CHARS = 15000;   // 单块切片输入上限（同时也是触发切片阈值）
+    private static final int CHUNK_MAX_OUTPUT_CHARS = 2000;  // 单块（CHUNK）总结输出上限
     private static final double CHUNK_OVERLAP_RATIO = 0.2;   // 相邻块重叠 = 单块长度 20%
     private static final int MID_MAX_CHARS = 1000;        // D3：中间聚合层（LANGUAGE/CATEGORY/SOURCE）上限
     private static final int REPORT_MAX_CHARS = 2000;    // D3：日报上限
@@ -72,7 +73,7 @@ public class PipelineServiceImpl implements PipelineService {
         log.info("Running crawl pipeline for date={}, period={}", date, period);
 
         // Step 1: 抓取元数据（不下载内容）
-        List<FetchResult> results = crawlerRegistry.crawlAll(date, period);
+        List<FetchResult> results = doCrawl(date, period, crawler -> true, null);
         return persistAndDownload(results);
     }
 
@@ -81,8 +82,41 @@ public class PipelineServiceImpl implements PipelineService {
         log.info("Running crawl pipeline for source={}, date={}, period={}", source, date, period);
 
         // Step 1: 抓取指定数据源的元数据（不下载内容）
-        List<FetchResult> results = crawlerRegistry.crawlBySource(source, date, period);
+        FetchRequest probe = FetchRequest.builder()
+                .source(source).period(period).date(date).build();
+        List<FetchResult> results = doCrawl(date, period, crawler -> crawler.supports(probe),
+                "No crawler supports source=" + source + ", period=" + period);
         return persistAndDownload(results);
+    }
+
+    /**
+     * 抓取编排：对通过 crawlerFilter 的抓取器，遍历其 buildContexts 产出的请求并执行抓取。
+     * buildContexts 已保证只返回受支持的请求，故此处不再逐个做 supports 过滤。
+     * 单个请求抓取失败时跳过并继续，不影响其他请求。
+     * 若没有任何抓取器通过过滤且 noMatchMessage 非 null，抛出 IllegalStateException。
+     */
+    private List<FetchResult> doCrawl(LocalDate date, PeriodEnum period,
+                                      Predicate<Crawler> crawlerFilter, String noMatchMessage) {
+        List<FetchResult> results = new ArrayList<>();
+        boolean anyMatched = false;
+        for (Crawler crawler : crawlerRegistry.getAllCrawlers()) {
+            if (!crawlerFilter.test(crawler)) {
+                continue;
+            }
+            anyMatched = true;
+            for (FetchRequest context : crawler.buildContexts(date, period)) {
+                try {
+                    results.add(crawler.crawl(context));
+                } catch (Exception e) {
+                    log.warn("Crawl failed for {} context={}, skipping",
+                            crawler.getClass().getSimpleName(), context, e);
+                }
+            }
+        }
+        if (noMatchMessage != null && !anyMatched) {
+            throw new IllegalStateException(noMatchMessage);
+        }
+        return results;
     }
 
     /**
@@ -124,14 +158,18 @@ public class PipelineServiceImpl implements PipelineService {
         log.info("Saved {} fetch results (reusing existing content where available)", results.size());
 
         for (FetchResult result : results) {
-            CrawlerContext downloadContext = buildDownloadContext(result);
-            Crawler crawler = crawlerRegistry.resolve(downloadContext);
+            Crawler crawler = crawlerRegistry.resolve(result).orElse(null);
+            if (crawler == null) {
+                log.info("无正文下载器，跳过正文抓取 source={}", result.getSource());
+                fetchResultRepository.updateItems(result);
+                continue;
+            }
             for (HotItem item : result.getItems()) {
                 if (!"PENDING".equals(item.getContentPath())) {
                     continue; // 已下载，跳过
                 }
                 try {
-                    crawler.download(item, downloadContext);
+                    crawler.download(item, result);
                 } catch (IOException e) {
                     log.warn("Download failed for item {} ({}): {}", item.getId(), item.getTitle(), e.getMessage());
                     // contentPath 保持 "PENDING"，供后续重试
@@ -147,16 +185,6 @@ public class PipelineServiceImpl implements PipelineService {
      */
     private static String contentKey(FetchResult fr, HotItem item) {
         return fr.getSource() + "|" + fr.getCategory() + "|" + fr.getLanguage() + "|" + item.getId();
-    }
-
-    private CrawlerContext buildDownloadContext(FetchResult result) {
-        return CrawlerContext.builder()
-                .source(result.getSource())
-                .period(result.getPeriod())
-                .date(result.getDate())
-                .category(result.getCategory())
-                .language(result.getLanguage())
-                .build();
     }
 
     // ===== 递归聚合编排（D1/D7/D8） =====
@@ -471,7 +499,7 @@ public class PipelineServiceImpl implements PipelineService {
     private void runPipeline(PeriodEnum period, LocalDate date) {
         try {
             log.info("[pipeline] start period={} date={}", period, date);
-            persistAndDownload(crawlerRegistry.crawlAll(date, period));
+            persistAndDownload(doCrawl(date, period, crawler -> true, null));
             ReportResult report = generateReport(period, date, false);
             updateState(period, TaskStatus.SUCCESS, null);
             log.info("[pipeline] done period={} date={} sourceCount={} categoryCount={} path={}",
