@@ -76,7 +76,7 @@ public class JuejinCrawler implements Crawler {
         }
 
         List<HotItem> hotItems = new ArrayList<>();
-        int topN = crawlerProperties.getJuejin().getDailyTopN();
+        int topN = crawlerProperties.getJuejin().getTopN().getDaily();
         int count = 0;
         for (Element itemElement : items) {
             if (count >= topN) {

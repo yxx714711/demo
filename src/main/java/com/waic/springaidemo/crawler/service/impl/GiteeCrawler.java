@@ -8,6 +8,7 @@ import com.waic.springaidemo.common.enums.DataSourceEnum;
 import com.waic.springaidemo.common.enums.PeriodEnum;
 import com.waic.springaidemo.common.utils.FilePathUtils;
 import com.waic.springaidemo.crawler.service.Crawler;
+import com.waic.springaidemo.crawler.utils.HttpUtil;
 import com.waic.springaidemo.crawler.utils.PageFetcherUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -18,15 +19,13 @@ import org.springframework.stereotype.Component;
 import org.springframework.util.CollectionUtils;
 
 import java.io.IOException;
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 
 /**
@@ -46,7 +45,7 @@ public class GiteeCrawler implements Crawler {
 
     private final CrawlerProperties crawlerProperties;
     private final PageFetcherUtil pageFetcherUtil;
-    private final HttpClient httpClient = HttpClient.newBuilder().followRedirects(HttpClient.Redirect.NORMAL).build();
+    private final HttpUtil httpUtil;
 
     @Override
     public DataSourceEnum getDataSource() {
@@ -55,7 +54,7 @@ public class GiteeCrawler implements Crawler {
 
     @Override
     public List<PeriodEnum> getSupportedPeriods() {
-        return List.of(PeriodEnum.DAILY);
+        return List.of(PeriodEnum.DAILY, PeriodEnum.WEEKLY);
     }
 
     @Override
@@ -72,19 +71,18 @@ public class GiteeCrawler implements Crawler {
 
     @Override
     public FetchResult crawl(FetchRequest context) {
+        PeriodEnum period = context.getPeriod();
+        String selector = mapTabSelector(period);
         String url = String.format(EXPLORE_URL, context.getCategory(), context.getLanguage());
-        log.info("Crawling Gitee explore: {}", url);
+        log.info("Crawling Gitee explore: {} period={}", url, period);
 
         Document document = pageFetcherUtil.fetchDocument(url);
-        int topN = crawlerProperties.getGitee().getDailyTopN();
 
-        List<HotItem> hotItems = new ArrayList<>();
-        parseTabItems(document, DAILY_TAB_SELECTOR, PeriodEnum.DAILY, topN, context, hotItems);
-        parseTabItems(document, WEEKLY_TAB_SELECTOR, PeriodEnum.WEEKLY, topN, context, hotItems);
+        List<HotItem> hotItems = parseTabItems(document, selector, context);
 
         return FetchResult.builder()
                 .source(context.getSource())
-                .period(context.getPeriod())
+                .period(period)
                 .date(context.getDate())
                 .category(context.getCategory())
                 .language(context.getLanguage())
@@ -95,28 +93,31 @@ public class GiteeCrawler implements Crawler {
     /**
      * 解析指定 tab 下的热门项目列表，结果追加到 hotItems
      */
-    private void parseTabItems(Document document, String selector, PeriodEnum period, int topN,
-                               FetchRequest context, List<HotItem> hotItems) {
-        Elements items = document.select(selector);
-        if (items.isEmpty()) {
-            log.warn("No Gitee trending items found for url period: {}", period);
-            return;
+    private List<HotItem> parseTabItems(Document document, String selector, FetchRequest context) {
+        Elements rows = document.select(selector);
+        if (rows.isEmpty()) {
+            log.warn("No Gitee trending items found for url period: {}", context.getPeriod());
+            return Collections.emptyList();
         }
+
+        List<HotItem> hotItems = new ArrayList<>();
+        int topN = resolveTopN(context.getPeriod());
         int count = 0;
-        for (Element itemElement : items) {
+        for (Element row : rows) {
             if (count >= topN) {
                 break;
             }
-            HotItem item = parseItem(itemElement, context, period);
+            HotItem item = parseRow(row, context);
             if (item == null) {
                 continue;
             }
             hotItems.add(item);
             count++;
         }
+        return hotItems;
     }
 
-    private HotItem parseItem(Element itemElement, FetchRequest context, PeriodEnum period) {
+    private HotItem parseRow(Element itemElement, FetchRequest context) {
         Element linkElement = itemElement.selectFirst(".title a");
         if (linkElement == null) {
             return null;
@@ -139,7 +140,7 @@ public class GiteeCrawler implements Crawler {
                 .title(title)
                 .url(fullUrl)
                 .source(context.getSource())
-                .period(period)
+                .period(context.getPeriod())
                 .category(context.getCategory())
                 .language(context.getLanguage())
                 .summary(description)
@@ -159,29 +160,43 @@ public class GiteeCrawler implements Crawler {
 
         for (String branch : SUPPORTED_README_BRANCHES) {
             String rawUrl = String.format("https://gitee.com/%s/%s/raw/%s/README.md", owner, repo, branch);
-            try {
-                HttpRequest request = HttpRequest.newBuilder(URI.create(rawUrl))
-                        .header("User-Agent", "Mozilla/5.0")
-                        .GET()
-                        .build();
-                HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-                if (response.statusCode() == 200) {
-                    String content = response.body();
-                    String slug = owner + "_" + repo;
-                    Path contentFilePath = FilePathUtils.getContentFilePath(result.getSource(), result.getPeriod(),
-                            result.getDate(), result.getCategory(), result.getLanguage(), slug);
-                    Files.createDirectories(contentFilePath.getParent());
-                    Files.writeString(contentFilePath, content);
-                    item.setContentPath(contentFilePath.toString().replace("\\", "/"));
-                    log.info("Downloaded README for {} to {}", item.getTitle(), item.getContentPath());
-                    return;
-                }
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                throw new IOException("Interrupted while downloading Gitee README from " + rawUrl, e);
+            HttpResponse<String> response = httpUtil.getFollow(rawUrl, null);
+            if (response.statusCode() == 200) {
+                String content = response.body();
+                String slug = owner + "_" + repo;
+                Path contentFilePath = FilePathUtils.getContentFilePath(result.getSource(), result.getPeriod(),
+                        result.getDate(), result.getCategory(), result.getLanguage(), slug);
+                Files.createDirectories(contentFilePath.getParent());
+                Files.writeString(contentFilePath, content);
+                item.setContentPath(contentFilePath.toString().replace("\\", "/"));
+                log.info("Downloaded README for {} to {}", item.getTitle(), item.getContentPath());
+                return;
             }
         }
         throw new IOException("Failed to download README for " + item.getTitle()
                 + " (all branches failed): " + item.getUrl());
+    }
+
+    /**
+     * Gitee 页面 daily/weekly 同页共存，按周期取对应 tab 的解析选择器。
+     */
+    private static String mapTabSelector(PeriodEnum period) {
+        return switch (period) {
+            case DAILY -> DAILY_TAB_SELECTOR;
+            case WEEKLY -> WEEKLY_TAB_SELECTOR;
+            default -> DAILY_TAB_SELECTOR;
+        };
+    }
+
+    /**
+     * 按周期解析 Gitee 的 TopN，DAILY/WEEKLY 分别对应 top-n 配置。
+     */
+    private int resolveTopN(PeriodEnum period) {
+        CrawlerProperties.TopNConfig topN = crawlerProperties.getGitee().getTopN();
+        return switch (period) {
+            case DAILY -> topN.getDaily();
+            case WEEKLY -> topN.getWeekly();
+            default -> topN.getDaily();
+        };
     }
 }

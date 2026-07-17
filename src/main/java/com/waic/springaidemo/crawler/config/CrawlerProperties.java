@@ -33,21 +33,29 @@ public class CrawlerProperties {
     @Data
     public static class GithubConfig {
         private List<String> languages = new ArrayList<>();
-        private Integer dailyTopN = 10;
-        private Integer weeklyTopN = 10;
-        private Integer monthlyTopN = 10;
+        private TopNConfig topN = new TopNConfig();
     }
 
     @Data
     public static class GiteeConfig {
         private List<String> categories = new ArrayList<>();
         private List<String> languages = new ArrayList<>();
-        private Integer dailyTopN = 10;
+        private TopNConfig topN = new TopNConfig();
     }
 
     @Data
     public static class JuejinConfig {
         private List<String> categories = new ArrayList<>();
-        private Integer dailyTopN = 10;
+        private TopNConfig topN = new TopNConfig();
+    }
+
+    /**
+     * 各周期 TopN 配置，默认值均为 10
+     */
+    @Data
+    public static class TopNConfig {
+        private Integer daily = 10;
+        private Integer weekly = 10;
+        private Integer monthly = 10;
     }
 }
