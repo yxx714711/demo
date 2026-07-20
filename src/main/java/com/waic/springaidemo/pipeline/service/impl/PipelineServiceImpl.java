@@ -11,7 +11,6 @@ import com.waic.springaidemo.common.entity.SummaryKey;
 import com.waic.springaidemo.common.enums.DataSourceEnum;
 import com.waic.springaidemo.common.enums.LevelEnum;
 import com.waic.springaidemo.common.enums.PeriodEnum;
-import com.waic.springaidemo.common.entity.FetchRequest;
 import com.waic.springaidemo.common.utils.TextSplitter;
 import com.waic.springaidemo.crawler.service.Crawler;
 import com.waic.springaidemo.crawler.service.CrawlerRegistry;
@@ -23,6 +22,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.core.task.TaskExecutor;
 import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
 
 import java.io.IOException;
 import java.time.LocalDate;
@@ -53,7 +53,6 @@ public class PipelineServiceImpl implements PipelineService {
     private static final double CHUNK_OVERLAP_RATIO = 0.2;   // 相邻块重叠 = 单块长度 20%
     private static final int MID_MAX_CHARS = 1000;        // D3：中间聚合层（LANGUAGE/CATEGORY/SOURCE）上限
     private static final int REPORT_MAX_CHARS = 2000;    // D3：日报上限
-    private static final String PLACEHOLDER = "_";       // D9/D10：占位段（_ 子目录直接拷贝）
 
     private final CrawlerRegistry crawlerRegistry;
     private final FetchResultRepository fetchResultRepository;
@@ -83,9 +82,7 @@ public class PipelineServiceImpl implements PipelineService {
         log.info("Running crawl pipeline for source={}, date={}, period={}", source, date, period);
 
         // Step 1: 抓取指定数据源的元数据（不下载内容）
-        FetchRequest probe = FetchRequest.builder()
-                .coordinate(new FetchCoordinate(period, date, source, null, null))
-                .build();
+        FetchCoordinate probe = new FetchCoordinate(period, date, source, null, null);
         List<FetchResult> results = doCrawl(date, period, crawler -> crawler.supports(probe),
                 "No crawler supports source=" + source + ", period=" + period);
         return persistAndDownload(results);
@@ -106,12 +103,12 @@ public class PipelineServiceImpl implements PipelineService {
                 continue;
             }
             anyMatched = true;
-            for (FetchRequest context : crawler.buildContexts(date, period)) {
+            for (FetchCoordinate coordinate : crawler.buildFetchCoordinates(date, period)) {
                 try {
-                    results.add(crawler.crawl(context));
+                    results.add(crawler.crawl(coordinate));
                 } catch (Exception e) {
-                    log.warn("Crawl failed for {} context={}, skipping",
-                            crawler.getClass().getSimpleName(), context, e);
+                    log.warn("Crawl failed for {} coordinate={}, skipping",
+                            crawler.getClass().getSimpleName(), coordinate, e);
                 }
             }
         }
@@ -393,7 +390,7 @@ public class PipelineServiceImpl implements PipelineService {
         }
 
         log.info("[report] compute aggregate node key={} level={} children={}", key, level, children.size());
-        // D10 copy：非叶子层且唯一子节点的「被折叠段」为 _ 占位 → 直接 copy，不调 LLM
+        // D10 copy：非叶子层且唯一子节点的「被折叠段」未指定（null/空白）→ 直接 copy，不调 LLM
         if (level != LevelEnum.ITEM && children.size() == 1 && isPlaceholderChild(level, children.get(0))) {
             SummaryKey childKey = childSummaryKey(period, date, source, category, language, level, children.get(0));
             summaryRepository.copySummary(childKey, key);
@@ -427,18 +424,19 @@ public class PipelineServiceImpl implements PipelineService {
     }
 
     /**
-     * 判定某非叶子层（level）下唯一子节点 child 的「被折叠段」是否为 _ 占位。
+     * 判定某非叶子层（level）下唯一子节点 child 的「被折叠段」是否未指定（null/空白）。
+     * D10：未指定维度不贡献信息，父摘要直接 copy 子摘要，跳过 LLM。
      * - CATEGORY：折叠 language 段
      * - SOURCE：折叠 category 段
-     * - DATE：折叠 source 段（code）
+     * - DATE：折叠 source 段（code，实际恒指定）
      * - LANGUAGE：折叠 itemId 段（实际不会触发，保留以贴合「除叶子外均适用」）
      */
     private boolean isPlaceholderChild(LevelEnum level, NodeSummary child) {
         return switch (level) {
-            case CATEGORY -> PLACEHOLDER.equals(child.getLanguage());
-            case SOURCE -> child.getCategory() != null && PLACEHOLDER.equals(child.getCategory());
-            case DATE -> child.getSource() != null && PLACEHOLDER.equals(child.getSource().getCode());
-            case LANGUAGE -> child.getItemId() != null && PLACEHOLDER.equals(child.getItemId());
+            case CATEGORY -> !StringUtils.hasText(child.getLanguage());
+            case SOURCE -> !StringUtils.hasText(child.getCategory());
+            case DATE -> child.getSource() == null;
+            case LANGUAGE -> !StringUtils.hasText(child.getItemId());
             default -> false; // ITEM
         };
     }

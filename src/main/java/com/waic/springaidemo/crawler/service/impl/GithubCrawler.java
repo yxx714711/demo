@@ -2,7 +2,6 @@ package com.waic.springaidemo.crawler.service.impl;
 
 import com.waic.springaidemo.crawler.config.CrawlerProperties;
 import com.waic.springaidemo.common.entity.FetchCoordinate;
-import com.waic.springaidemo.common.entity.FetchRequest;
 import com.waic.springaidemo.common.entity.FetchResult;
 import com.waic.springaidemo.common.entity.HotItem;
 import com.waic.springaidemo.common.enums.DataSourceEnum;
@@ -57,7 +56,7 @@ public class GithubCrawler implements Crawler {
     }
 
     @Override
-    public List<PeriodEnum> getSupportedPeriods() {
+    public List<PeriodEnum> getPeriods() {
         return Arrays.asList(PeriodEnum.DAILY, PeriodEnum.WEEKLY, PeriodEnum.MONTHLY);
     }
 
@@ -73,8 +72,7 @@ public class GithubCrawler implements Crawler {
     }
 
     @Override
-    public FetchResult crawl(FetchRequest context) {
-        FetchCoordinate coordinate = context.getCoordinate();
+    public FetchResult crawl(FetchCoordinate coordinate) {
         String periodParam = mapPeriod(coordinate.period());
         String langParam = "all".equals(coordinate.language()) ? "" : coordinate.language();
         String url = String.format(TRENDING_URL, langParam, periodParam);
@@ -94,7 +92,7 @@ public class GithubCrawler implements Crawler {
             if (count >= topN) {
                 break;
             }
-            HotItem item = parseRow(row, context);
+            HotItem item = parseRow(row, coordinate);
             if (item == null) {
                 continue;
             }
@@ -108,7 +106,7 @@ public class GithubCrawler implements Crawler {
                 .build();
     }
 
-    private HotItem parseRow(Element row, FetchRequest context) {
+    private HotItem parseRow(Element row, FetchCoordinate coordinate) {
         Element linkElement = row.selectFirst("h2 a");
         if (linkElement == null) {
             return null;

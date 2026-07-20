@@ -2,7 +2,6 @@ package com.waic.springaidemo.crawler.service.impl;
 
 import com.waic.springaidemo.crawler.config.CrawlerProperties;
 import com.waic.springaidemo.common.entity.FetchCoordinate;
-import com.waic.springaidemo.common.entity.FetchRequest;
 import com.waic.springaidemo.common.entity.FetchResult;
 import com.waic.springaidemo.common.entity.HotItem;
 import com.waic.springaidemo.common.enums.DataSourceEnum;
@@ -46,7 +45,7 @@ public class JuejinCrawler implements Crawler {
     }
 
     @Override
-    public List<PeriodEnum> getSupportedPeriods() {
+    public List<PeriodEnum> getPeriods() {
         return List.of(PeriodEnum.DAILY);
     }
 
@@ -62,8 +61,7 @@ public class JuejinCrawler implements Crawler {
     }
 
     @Override
-    public FetchResult crawl(FetchRequest context) {
-        FetchCoordinate coordinate = context.getCoordinate();
+    public FetchResult crawl(FetchCoordinate coordinate) {
         String url = "all".equals(coordinate.category())
                 ? HOT_URL_ALL
                 : String.format(HOT_URL, coordinate.category());
@@ -84,7 +82,7 @@ public class JuejinCrawler implements Crawler {
             if (count >= topN) {
                 break;
             }
-            HotItem item = parseItem(itemElement, context);
+            HotItem item = parseItem(itemElement, coordinate);
             if (item == null) {
                 continue;
             }
@@ -98,7 +96,7 @@ public class JuejinCrawler implements Crawler {
                 .build();
     }
 
-    private HotItem parseItem(Element itemElement, FetchRequest context) {
+    private HotItem parseItem(Element itemElement, FetchCoordinate coordinate) {
         // itemElement 本身就是 a.article-item-link，href 即文章链接
         String relativeUrl = itemElement.attr("href");
         if (relativeUrl.isBlank()) {
