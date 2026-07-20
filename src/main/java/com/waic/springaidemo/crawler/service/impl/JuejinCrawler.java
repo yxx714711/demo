@@ -1,6 +1,7 @@
 package com.waic.springaidemo.crawler.service.impl;
 
 import com.waic.springaidemo.crawler.config.CrawlerProperties;
+import com.waic.springaidemo.common.entity.FetchCoordinate;
 import com.waic.springaidemo.common.entity.FetchRequest;
 import com.waic.springaidemo.common.entity.FetchResult;
 import com.waic.springaidemo.common.entity.HotItem;
@@ -62,9 +63,10 @@ public class JuejinCrawler implements Crawler {
 
     @Override
     public FetchResult crawl(FetchRequest context) {
-        String url = "all".equals(context.getCategory())
+        FetchCoordinate coordinate = context.getCoordinate();
+        String url = "all".equals(coordinate.category())
                 ? HOT_URL_ALL
-                : String.format(HOT_URL, context.getCategory());
+                : String.format(HOT_URL, coordinate.category());
         log.info("Crawling Juejin hot articles: {}", url);
 
         // 掘金为 Nuxt SSR/SPA，Jsoup 直连会被反爬返回空壳，故直接走 Playwright，
@@ -91,11 +93,7 @@ public class JuejinCrawler implements Crawler {
         }
 
         return FetchResult.builder()
-                .source(context.getSource())
-                .period(context.getPeriod())
-                .date(context.getDate())
-                .category(context.getCategory())
-                .language(context.getLanguage())
+                .coordinate(coordinate)
                 .items(hotItems)
                 .build();
     }
@@ -123,10 +121,6 @@ public class JuejinCrawler implements Crawler {
                 .id("juejin_" + slug)
                 .title(title)
                 .url(fullUrl)
-                .source(context.getSource())
-                .period(context.getPeriod())
-                .category(context.getCategory())
-                .language(context.getLanguage())
                 .summary(description)
                 .fetchedAt(LocalDateTime.now())
                 .build();
@@ -148,9 +142,10 @@ public class JuejinCrawler implements Crawler {
             item.setContentPath("");
             return;
         }
+        FetchCoordinate coordinate = result.getCoordinate();
         String slug = extractSlug(item.getUrl());
-        Path contentFilePath = FilePathUtils.getContentFilePath(result.getSource(), result.getPeriod(),
-                result.getDate(), result.getCategory(), result.getLanguage(), slug);
+        Path contentFilePath = FilePathUtils.getContentFilePath(coordinate.source(), coordinate.period(),
+                coordinate.date(), coordinate.category(), coordinate.language(), slug);
         Files.createDirectories(contentFilePath.getParent());
         Files.writeString(contentFilePath, content);
         item.setContentPath(contentFilePath.toString().replace("\\", "/"));

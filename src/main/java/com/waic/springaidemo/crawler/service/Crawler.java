@@ -1,5 +1,6 @@
 package com.waic.springaidemo.crawler.service;
 
+import com.waic.springaidemo.common.entity.FetchCoordinate;
 import com.waic.springaidemo.common.entity.FetchRequest;
 import com.waic.springaidemo.common.entity.FetchResult;
 import com.waic.springaidemo.common.entity.HotItem;
@@ -56,16 +57,17 @@ public interface Crawler {
      * @return true 表示支持
      */
     default boolean supports(FetchRequest request) {
-        if (request.getSource() != getDataSource()) {
+        FetchCoordinate coordinate = request.getCoordinate();
+        if (coordinate.source() != getDataSource()) {
             return false;
         }
-        if (!getSupportedPeriods().contains(request.getPeriod())) {
+        if (!getSupportedPeriods().contains(coordinate.period())) {
             return false;
         }
-        if (!matchDimension(getCategories(), request.getCategory())) {
+        if (!matchDimension(getCategories(), coordinate.category())) {
             return false;
         }
-        return matchDimension(getLanguages(), request.getLanguage());
+        return matchDimension(getLanguages(), coordinate.language());
     }
 
     /**
@@ -149,11 +151,7 @@ public interface Crawler {
 
     private FetchRequest buildContext(LocalDate date, PeriodEnum period, String category, String language) {
         return FetchRequest.builder()
-                .source(getDataSource())
-                .period(period)
-                .date(date)
-                .category(category)
-                .language(language)
+                .coordinate(new FetchCoordinate(period, date, getDataSource(), category, language))
                 .build();
     }
 }

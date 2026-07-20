@@ -1,6 +1,7 @@
 package com.waic.springaidemo.crawler.service.impl;
 
 import com.waic.springaidemo.crawler.config.CrawlerProperties;
+import com.waic.springaidemo.common.entity.FetchCoordinate;
 import com.waic.springaidemo.common.entity.FetchRequest;
 import com.waic.springaidemo.common.entity.FetchResult;
 import com.waic.springaidemo.common.entity.HotItem;
@@ -71,9 +72,10 @@ public class GiteeCrawler implements Crawler {
 
     @Override
     public FetchResult crawl(FetchRequest context) {
-        PeriodEnum period = context.getPeriod();
+        FetchCoordinate coordinate = context.getCoordinate();
+        PeriodEnum period = coordinate.period();
         String selector = mapTabSelector(period);
-        String url = String.format(EXPLORE_URL, context.getCategory(), context.getLanguage());
+        String url = String.format(EXPLORE_URL, coordinate.category(), coordinate.language());
         log.info("Crawling Gitee explore: {} period={}", url, period);
 
         Document document = pageFetcherUtil.fetchDocument(url);
@@ -81,11 +83,7 @@ public class GiteeCrawler implements Crawler {
         List<HotItem> hotItems = parseTabItems(document, selector, context);
 
         return FetchResult.builder()
-                .source(context.getSource())
-                .period(period)
-                .date(context.getDate())
-                .category(context.getCategory())
-                .language(context.getLanguage())
+                .coordinate(coordinate)
                 .items(hotItems)
                 .build();
     }
@@ -94,14 +92,15 @@ public class GiteeCrawler implements Crawler {
      * 解析指定 tab 下的热门项目列表，结果追加到 hotItems
      */
     private List<HotItem> parseTabItems(Document document, String selector, FetchRequest context) {
+        FetchCoordinate coordinate = context.getCoordinate();
         Elements rows = document.select(selector);
         if (rows.isEmpty()) {
-            log.warn("No Gitee trending items found for url period: {}", context.getPeriod());
+            log.warn("No Gitee trending items found for url period: {}", coordinate.period());
             return Collections.emptyList();
         }
 
         List<HotItem> hotItems = new ArrayList<>();
-        int topN = resolveTopN(context.getPeriod());
+        int topN = resolveTopN(coordinate.period());
         int count = 0;
         for (Element row : rows) {
             if (count >= topN) {
@@ -139,10 +138,6 @@ public class GiteeCrawler implements Crawler {
                 .id("gitee_" + repoPath.replace("/", "_"))
                 .title(title)
                 .url(fullUrl)
-                .source(context.getSource())
-                .period(context.getPeriod())
-                .category(context.getCategory())
-                .language(context.getLanguage())
                 .summary(description)
                 .fetchedAt(LocalDateTime.now())
                 .build();
@@ -158,14 +153,15 @@ public class GiteeCrawler implements Crawler {
         String owner = parts[0];
         String repo = parts[1];
 
+        FetchCoordinate coordinate = result.getCoordinate();
         for (String branch : SUPPORTED_README_BRANCHES) {
             String rawUrl = String.format("https://gitee.com/%s/%s/raw/%s/README.md", owner, repo, branch);
             HttpResponse<String> response = httpUtil.getFollow(rawUrl, null);
             if (response.statusCode() == 200) {
                 String content = response.body();
                 String slug = owner + "_" + repo;
-                Path contentFilePath = FilePathUtils.getContentFilePath(result.getSource(), result.getPeriod(),
-                        result.getDate(), result.getCategory(), result.getLanguage(), slug);
+                Path contentFilePath = FilePathUtils.getContentFilePath(coordinate.source(), coordinate.period(),
+                        coordinate.date(), coordinate.category(), coordinate.language(), slug);
                 Files.createDirectories(contentFilePath.getParent());
                 Files.writeString(contentFilePath, content);
                 item.setContentPath(contentFilePath.toString().replace("\\", "/"));

@@ -2,6 +2,7 @@ package com.waic.springaidemo.pipeline.service.impl;
 
 import com.waic.springaidemo.ai.service.ReportGenerator;
 import com.waic.springaidemo.ai.entity.SummaryContext;
+import com.waic.springaidemo.common.entity.FetchCoordinate;
 import com.waic.springaidemo.common.entity.FetchResult;
 import com.waic.springaidemo.common.entity.HotItem;
 import com.waic.springaidemo.common.entity.NodeSummary;
@@ -83,7 +84,8 @@ public class PipelineServiceImpl implements PipelineService {
 
         // Step 1: 抓取指定数据源的元数据（不下载内容）
         FetchRequest probe = FetchRequest.builder()
-                .source(source).period(period).date(date).build();
+                .coordinate(new FetchCoordinate(period, date, source, null, null))
+                .build();
         List<FetchResult> results = doCrawl(date, period, crawler -> crawler.supports(probe),
                 "No crawler supports source=" + source + ", period=" + period);
         return persistAndDownload(results);
@@ -128,14 +130,15 @@ public class PipelineServiceImpl implements PipelineService {
         if (results.isEmpty()) {
             return results;
         }
-        LocalDate date = results.get(0).getDate();
-        PeriodEnum period = results.get(0).getPeriod();
+        FetchCoordinate firstCoordinate = results.get(0).getCoordinate();
+        LocalDate date = firstCoordinate.date();
+        PeriodEnum period = firstCoordinate.period();
 
         // 预载已有「已下载」contentPath：key = source|category|language|itemId
         Map<String, String> existingPaths = new HashMap<>();
         Set<DataSourceEnum> sources = new java.util.LinkedHashSet<>();
         for (FetchResult fr : results) {
-            sources.add(fr.getSource());
+            sources.add(fr.getCoordinate().source());
         }
         for (DataSourceEnum src : sources) {
             List<FetchResult> existing = fetchResultRepository.loadByDate(src, period, date);
@@ -160,7 +163,7 @@ public class PipelineServiceImpl implements PipelineService {
         for (FetchResult result : results) {
             Crawler crawler = crawlerRegistry.resolve(result).orElse(null);
             if (crawler == null) {
-                log.info("无正文下载器，跳过正文抓取 source={}", result.getSource());
+                log.info("无正文下载器，跳过正文抓取 source={}", result.getCoordinate().source());
                 fetchResultRepository.updateItems(result);
                 continue;
             }
@@ -184,7 +187,8 @@ public class PipelineServiceImpl implements PipelineService {
      * 断点续跑用的 item 定位键（同 source/category/language 下按 itemId 区分）。
      */
     private static String contentKey(FetchResult fr, HotItem item) {
-        return fr.getSource() + "|" + fr.getCategory() + "|" + fr.getLanguage() + "|" + item.getId();
+        FetchCoordinate coordinate = fr.getCoordinate();
+        return coordinate.source() + "|" + coordinate.category() + "|" + coordinate.language() + "|" + item.getId();
     }
 
     // ===== 递归聚合编排（D1/D7/D8） =====
@@ -201,9 +205,10 @@ public class PipelineServiceImpl implements PipelineService {
         // 建树：source -> category -> language -> FetchResult（后序遍历）
         Map<DataSourceEnum, Map<String, Map<String, FetchResult>>> tree = new LinkedHashMap<>();
         for (FetchResult fr : results) {
-            tree.computeIfAbsent(fr.getSource(), k -> new LinkedHashMap<>())
-                    .computeIfAbsent(fr.getCategory(), k -> new LinkedHashMap<>())
-                    .put(fr.getLanguage(), fr);
+            FetchCoordinate coordinate = fr.getCoordinate();
+            tree.computeIfAbsent(coordinate.source(), k -> new LinkedHashMap<>())
+                    .computeIfAbsent(coordinate.category(), k -> new LinkedHashMap<>())
+                    .put(coordinate.language(), fr);
         }
 
         int sourceCount = tree.size();

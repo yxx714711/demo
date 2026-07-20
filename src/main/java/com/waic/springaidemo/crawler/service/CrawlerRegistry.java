@@ -58,11 +58,7 @@ public class CrawlerRegistry {
      */
     public Optional<Crawler> resolve(FetchResult result) {
         FetchRequest request = FetchRequest.builder()
-                .source(result.getSource())
-                .period(result.getPeriod())
-                .date(result.getDate())
-                .category(result.getCategory())
-                .language(result.getLanguage())
+                .coordinate(result.getCoordinate())
                 .build();
         return resolve(request);
     }

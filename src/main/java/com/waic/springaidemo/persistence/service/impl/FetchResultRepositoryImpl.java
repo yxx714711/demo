@@ -2,6 +2,7 @@ package com.waic.springaidemo.persistence.service.impl;
 
 import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.ObjectMapper;
+import com.waic.springaidemo.common.entity.FetchCoordinate;
 import com.waic.springaidemo.common.entity.FetchResult;
 import com.waic.springaidemo.common.entity.HotItem;
 import com.waic.springaidemo.common.enums.DataSourceEnum;
@@ -36,8 +37,9 @@ public class FetchResultRepositoryImpl implements FetchResultRepository {
 
     @Override
     public void save(FetchResult result) throws IOException {
-        Path filePath = FilePathUtils.getHotItemsFilePath(result.getSource(), result.getPeriod(),
-                result.getDate(), result.getCategory(), result.getLanguage());
+        FetchCoordinate coordinate = result.getCoordinate();
+        Path filePath = FilePathUtils.getHotItemsFilePath(coordinate.source(), coordinate.period(),
+                coordinate.date(), coordinate.category(), coordinate.language());
         Files.createDirectories(filePath.getParent());
         String json = objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(result);
         Files.writeString(filePath, json, StandardCharsets.UTF_8);
@@ -82,8 +84,9 @@ public class FetchResultRepositoryImpl implements FetchResultRepository {
 
     @Override
     public void updateItems(FetchResult result) throws IOException {
-        Path filePath = FilePathUtils.getHotItemsFilePath(result.getSource(), result.getPeriod(),
-                result.getDate(), result.getCategory(), result.getLanguage());
+        FetchCoordinate coordinate = result.getCoordinate();
+        Path filePath = FilePathUtils.getHotItemsFilePath(coordinate.source(), coordinate.period(),
+                coordinate.date(), coordinate.category(), coordinate.language());
         if (!Files.exists(filePath)) {
             log.warn("Fetch result file not found: {}", filePath);
             return;

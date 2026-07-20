@@ -1,7 +1,5 @@
 package com.waic.springaidemo.common.entity;
 
-import com.waic.springaidemo.common.enums.DataSourceEnum;
-import com.waic.springaidemo.common.enums.PeriodEnum;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -35,26 +33,6 @@ public class HotItem {
      * 链接
      */
     private String url;
-
-    /**
-     * 数据源
-     */
-    private DataSourceEnum source;
-
-    /**
-     * 周期
-     */
-    private PeriodEnum period;
-
-    /**
-     * 分类，不存在时用 _ 占位
-     */
-    private String category;
-
-    /**
-     * 语言，不存在时用 _ 占位
-     */
-    private String language;
 
     /**
      * 摘要

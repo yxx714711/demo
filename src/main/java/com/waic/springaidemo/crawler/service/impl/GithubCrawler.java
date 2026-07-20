@@ -1,6 +1,7 @@
 package com.waic.springaidemo.crawler.service.impl;
 
 import com.waic.springaidemo.crawler.config.CrawlerProperties;
+import com.waic.springaidemo.common.entity.FetchCoordinate;
 import com.waic.springaidemo.common.entity.FetchRequest;
 import com.waic.springaidemo.common.entity.FetchResult;
 import com.waic.springaidemo.common.entity.HotItem;
@@ -73,8 +74,9 @@ public class GithubCrawler implements Crawler {
 
     @Override
     public FetchResult crawl(FetchRequest context) {
-        String periodParam = mapPeriod(context.getPeriod());
-        String langParam = "all".equals(context.getLanguage()) ? "" : context.getLanguage();
+        FetchCoordinate coordinate = context.getCoordinate();
+        String periodParam = mapPeriod(coordinate.period());
+        String langParam = "all".equals(coordinate.language()) ? "" : coordinate.language();
         String url = String.format(TRENDING_URL, langParam, periodParam);
         log.info("正在抓取 GitHub 热门仓库: {}", url);
 
@@ -86,7 +88,7 @@ public class GithubCrawler implements Crawler {
         }
 
         List<HotItem> items = new ArrayList<>();
-        int topN = resolveTopN(context.getPeriod());
+        int topN = resolveTopN(coordinate.period());
         int count = 0;
         for (Element row : rows) {
             if (count >= topN) {
@@ -101,11 +103,7 @@ public class GithubCrawler implements Crawler {
         }
 
         return FetchResult.builder()
-                .source(context.getSource())
-                .period(context.getPeriod())
-                .date(context.getDate())
-                .category(context.getCategory())
-                .language(context.getLanguage())
+                .coordinate(coordinate)
                 .items(items)
                 .build();
     }
@@ -132,10 +130,6 @@ public class GithubCrawler implements Crawler {
                 .id("github_" + repoPath.replace("/", "_"))
                 .title(title)
                 .url(fullUrl)
-                .source(context.getSource())
-                .period(context.getPeriod())
-                .category(context.getCategory())
-                .language(context.getLanguage())
                 .summary(description)
                 .fetchedAt(LocalDateTime.now())
                 .build();
@@ -222,9 +216,10 @@ public class GithubCrawler implements Crawler {
     }
 
     private void saveContent(String content, HotItem item, FetchResult result) throws IOException {
+        FetchCoordinate coordinate = result.getCoordinate();
         String repoPath = item.getUrl().replace("https://github.com/", "").replace("/", "_");
-        Path contentFilePath = FilePathUtils.getContentFilePath(result.getSource(), result.getPeriod(),
-                result.getDate(), result.getCategory(), result.getLanguage(), repoPath);
+        Path contentFilePath = FilePathUtils.getContentFilePath(coordinate.source(), coordinate.period(),
+                coordinate.date(), coordinate.category(), coordinate.language(), repoPath);
         Files.createDirectories(contentFilePath.getParent());
         Files.writeString(contentFilePath, content);
         item.setContentPath(contentFilePath.toString().replace("\\", "/"));
