@@ -5,8 +5,6 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
-import java.time.LocalDateTime;
-
 /**
  * 通用热门项
  * @author 10542
@@ -35,15 +33,10 @@ public class HotItem {
     /**
      * 摘要
      */
-    private String summary;
+    private String description;
 
     /**
      * 内容文件路径（README 或文章正文）
      */
     private String contentPath;
-
-    /**
-     * 抓取时间
-     */
-    private LocalDateTime fetchedAt;
 }

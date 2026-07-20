@@ -1,7 +1,6 @@
 package com.waic.springaidemo.crawler.service;
 
 import com.waic.springaidemo.common.entity.FetchCoordinate;
-import com.waic.springaidemo.common.entity.FetchResult;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -44,17 +43,5 @@ public class CrawlerRegistry {
             }
         }
         return Optional.empty();
-    }
-
-    /**
-     * 根据已落盘的抓取结果反查对应的抓取器（用于正文下载）。
-     * 直接以结果的抓取坐标复用 {@link #resolve(FetchCoordinate)} 的定位逻辑。
-     * 若无可下载的数据源（如纯列表源）返回 empty，由调用方优雅跳过。
-     *
-     * @param result 抓取结果
-     * @return 抓取器（可能为 empty）
-     */
-    public Optional<Crawler> resolve(FetchResult result) {
-        return resolve(result.getCoordinate());
     }
 }

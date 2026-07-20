@@ -26,7 +26,6 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Base64;
-import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -41,8 +40,6 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class GithubCrawler implements Crawler {
 
-    private static final String TRENDING_URL = "https://github.com/trending/%s?since=%s";
-    private static final String API_README_URL = "https://api.github.com/repos/%s/%s/readme";
     private static final int[] RETRYABLE_STATUS = {429, 500, 502, 503, 504};
 
     private final CrawlerProperties crawlerProperties;
@@ -75,7 +72,7 @@ public class GithubCrawler implements Crawler {
     public FetchResult crawl(FetchCoordinate coordinate) {
         String periodParam = mapPeriod(coordinate.period());
         String langParam = "all".equals(coordinate.language()) ? "" : coordinate.language();
-        String url = String.format(TRENDING_URL, langParam, periodParam);
+        String url = String.format(crawlerProperties.getGithub().getHotBaseUrl(), langParam, periodParam);
         log.info("正在抓取 GitHub 热门仓库: {}", url);
 
         Document document = pageFetcherUtil.fetchDocument(url, "article.Box-row",
@@ -128,8 +125,7 @@ public class GithubCrawler implements Crawler {
                 .id("github_" + repoPath.replace("/", "_"))
                 .title(title)
                 .url(fullUrl)
-                .summary(description)
-                .fetchedAt(LocalDateTime.now())
+                .description(description)
                 .build();
     }
 
@@ -156,7 +152,7 @@ public class GithubCrawler implements Crawler {
      * 429/5xx/网络异常 -> 重试；404/400/403(非限流) -> 直接结束。
      */
     private boolean tryDownloadViaApi(String owner, String repo, HotItem item, FetchResult result) {
-        String url = String.format(API_README_URL, owner, repo);
+        String url = String.format(crawlerProperties.getGithub().getContentBaseUrl(), owner, repo);
         int maxRetries = 3;
         int attempt = 0;
         while (true) {

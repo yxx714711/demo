@@ -23,34 +23,6 @@ import java.util.stream.Stream;
 public interface Crawler {
 
     /**
-     * 获取数据源
-     *
-     * @return 数据源枚举
-     */
-    DataSourceEnum getDataSource();
-
-    /**
-     * 获取支持的周期列表
-     *
-     * @return 周期列表
-     */
-    List<PeriodEnum> getPeriods();
-
-    /**
-     * 获取分类列表，不存在时返回空列表
-     *
-     * @return 分类列表
-     */
-    List<String> getCategories();
-
-    /**
-     * 获取语言列表，不存在时返回空列表
-     *
-     * @return 语言列表
-     */
-    List<String> getLanguages();
-
-    /**
      * 列表侧：判断当前抓取器是否支持该坐标
      *
      * @param coordinate 抓取坐标
@@ -91,6 +63,34 @@ public interface Crawler {
                 )
                 .toList();
     }
+
+    /**
+     * 获取数据源
+     *
+     * @return 数据源枚举
+     */
+    DataSourceEnum getDataSource();
+
+    /**
+     * 获取支持的周期列表
+     *
+     * @return 周期列表
+     */
+    List<PeriodEnum> getPeriods();
+
+    /**
+     * 获取分类列表，不存在时返回空列表
+     *
+     * @return 分类列表
+     */
+    List<String> getCategories();
+
+    /**
+     * 获取语言列表，不存在时返回空列表
+     *
+     * @return 语言列表
+     */
+    List<String> getLanguages();
 
     /**
      * 列表侧：执行抓取

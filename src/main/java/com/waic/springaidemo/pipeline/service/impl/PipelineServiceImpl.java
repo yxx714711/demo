@@ -158,7 +158,7 @@ public class PipelineServiceImpl implements PipelineService {
         log.info("Saved {} fetch results (reusing existing content where available)", results.size());
 
         for (FetchResult result : results) {
-            Crawler crawler = crawlerRegistry.resolve(result).orElse(null);
+            Crawler crawler = crawlerRegistry.resolve(result.getCoordinate()).orElse(null);
             if (crawler == null) {
                 log.info("无正文下载器，跳过正文抓取 source={}", result.getCoordinate().source());
                 fetchResultRepository.updateItems(result);
@@ -305,8 +305,8 @@ public class PipelineServiceImpl implements PipelineService {
             if (item.getTitle() != null && !item.getTitle().isBlank()) {
                 pseudo.append("# ").append(item.getTitle()).append("\n");
             }
-            if (item.getSummary() != null && !item.getSummary().isBlank()) {
-                pseudo.append(item.getSummary()).append("\n");
+            if (item.getDescription() != null && !item.getDescription().isBlank()) {
+                pseudo.append(item.getDescription()).append("\n");
             }
             inputText = pseudo.isEmpty() ? null : pseudo.toString();
         }

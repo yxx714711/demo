@@ -34,6 +34,8 @@ public class CrawlerProperties {
     public static class GithubConfig {
         private List<String> languages = new ArrayList<>();
         private TopNConfig topN = new TopNConfig();
+        private String hotBaseUrl = "https://github.com/trending/%s?since=%s";
+        private String contentBaseUrl = "https://api.github.com/repos/%s/%s/readme";
     }
 
     @Data
@@ -41,12 +43,15 @@ public class CrawlerProperties {
         private List<String> categories = new ArrayList<>();
         private List<String> languages = new ArrayList<>();
         private TopNConfig topN = new TopNConfig();
+        private String hotBaseUrl = "https://gitee.com/explore/%s?lang=%s&type=hot";
+        private String contentBaseUrl = "https://gitee.com/%s/%s/raw/%s/README.md";
     }
 
     @Data
     public static class JuejinConfig {
         private List<String> categories = new ArrayList<>();
         private TopNConfig topN = new TopNConfig();
+        private String hotBaseUrl = "https://juejin.cn/hot/articles";
     }
 
     /**

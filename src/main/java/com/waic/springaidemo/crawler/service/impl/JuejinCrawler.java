@@ -21,7 +21,6 @@ import org.springframework.util.CollectionUtils;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -32,9 +31,6 @@ import java.util.List;
 @Component
 @RequiredArgsConstructor
 public class JuejinCrawler implements Crawler {
-
-    private static final String HOT_URL = "https://juejin.cn/hot/articles/%s";
-    private static final String HOT_URL_ALL = "https://juejin.cn/hot/articles";
 
     private final CrawlerProperties crawlerProperties;
     private final PageFetcherUtil pageFetcherUtil;
@@ -63,8 +59,8 @@ public class JuejinCrawler implements Crawler {
     @Override
     public FetchResult crawl(FetchCoordinate coordinate) {
         String url = "all".equals(coordinate.category())
-                ? HOT_URL_ALL
-                : String.format(HOT_URL, coordinate.category());
+                ? crawlerProperties.getJuejin().getHotBaseUrl()
+                : crawlerProperties.getJuejin().getHotBaseUrl() + "/" + coordinate.category();
         log.info("Crawling Juejin hot articles: {}", url);
 
         // 掘金为 Nuxt SSR/SPA，Jsoup 直连会被反爬返回空壳，故直接走 Playwright，
@@ -119,8 +115,7 @@ public class JuejinCrawler implements Crawler {
                 .id("juejin_" + slug)
                 .title(title)
                 .url(fullUrl)
-                .summary(description)
-                .fetchedAt(LocalDateTime.now())
+                .description(description)
                 .build();
     }
 
