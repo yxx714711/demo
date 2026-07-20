@@ -105,7 +105,7 @@ public interface Crawler {
      * 基于列表侧已落盘的 {@link FetchResult} 工作。
      *
      * @param item   热门项
-     * @param result 对应的抓取结果（提供 source/period/date/category/language 用于落盘路径）
+     * @param result 对应的抓取结果（提供坐标 FetchCoordinate、更新正文路径 contentPath）
      * @throws IOException 下载失败时抛出
      */
     void download(HotItem item, FetchResult result) throws IOException;

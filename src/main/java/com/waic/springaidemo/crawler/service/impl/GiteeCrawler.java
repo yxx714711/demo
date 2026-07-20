@@ -137,6 +137,21 @@ public class GiteeCrawler implements Crawler {
                 .build();
     }
 
+    /**
+     * Gitee 页面 daily/weekly 同页共存，按周期取对应 tab 的解析选择器。
+     */
+    private static String getTabSelector(PeriodEnum period) {
+        return period == PeriodEnum.DAILY ? DAILY_TAB_SELECTOR : WEEKLY_TAB_SELECTOR;
+    }
+
+    /**
+     * 按周期解析 Gitee 的 TopN，DAILY/WEEKLY 分别对应 top-n 配置。
+     */
+    private int getTopN(PeriodEnum period) {
+        CrawlerProperties.TopNConfig topN = crawlerProperties.getGitee().getTopN();
+        return period == PeriodEnum.DAILY ? topN.getDaily() : topN.getWeekly();
+    }
+
     @Override
     public void download(HotItem item, FetchResult result) throws IOException {
         String repoPath = item.getUrl().replace("https://gitee.com/", "");
@@ -165,20 +180,5 @@ public class GiteeCrawler implements Crawler {
         }
         throw new IOException("Failed to download README for " + item.getTitle()
                 + " (all branches failed): " + item.getUrl());
-    }
-
-    /**
-     * Gitee 页面 daily/weekly 同页共存，按周期取对应 tab 的解析选择器。
-     */
-    private static String getTabSelector(PeriodEnum period) {
-        return period == PeriodEnum.DAILY ? DAILY_TAB_SELECTOR : WEEKLY_TAB_SELECTOR;
-    }
-
-    /**
-     * 按周期解析 Gitee 的 TopN，DAILY/WEEKLY 分别对应 top-n 配置。
-     */
-    private int getTopN(PeriodEnum period) {
-        CrawlerProperties.TopNConfig topN = crawlerProperties.getGitee().getTopN();
-        return period == PeriodEnum.DAILY ? topN.getDaily() : topN.getWeekly();
     }
 }
