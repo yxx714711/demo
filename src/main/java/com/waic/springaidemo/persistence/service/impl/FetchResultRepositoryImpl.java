@@ -39,7 +39,7 @@ public class FetchResultRepositoryImpl implements FetchResultRepository {
     public void save(FetchResult result) throws IOException {
         FetchCoordinate coordinate = result.getCoordinate();
         Path filePath = FilePathUtils.getHotItemsFilePath(coordinate.source(), coordinate.period(),
-                coordinate.date(), coordinate.category(), coordinate.language());
+                coordinate.date(), coordinate.normalizedCategory(), coordinate.normalizedLanguage());
         Files.createDirectories(filePath.getParent());
         String json = objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(result);
         Files.writeString(filePath, json, StandardCharsets.UTF_8);
@@ -86,7 +86,7 @@ public class FetchResultRepositoryImpl implements FetchResultRepository {
     public void updateItems(FetchResult result) throws IOException {
         FetchCoordinate coordinate = result.getCoordinate();
         Path filePath = FilePathUtils.getHotItemsFilePath(coordinate.source(), coordinate.period(),
-                coordinate.date(), coordinate.category(), coordinate.language());
+                coordinate.date(), coordinate.normalizedCategory(), coordinate.normalizedLanguage());
         if (!Files.exists(filePath)) {
             log.warn("Fetch result file not found: {}", filePath);
             return;

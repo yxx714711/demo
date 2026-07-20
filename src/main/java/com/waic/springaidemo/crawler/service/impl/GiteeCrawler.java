@@ -75,8 +75,14 @@ public class GiteeCrawler implements Crawler {
         FetchCoordinate coordinate = context.getCoordinate();
         PeriodEnum period = coordinate.period();
         String selector = mapTabSelector(period);
-        String category = "_".equals(coordinate.category()) ? "all" : coordinate.category();
-        String language = "_".equals(coordinate.language()) ? "all" : coordinate.language();
+        String category = coordinate.category();
+        String language = coordinate.language();
+        if (category == null || "_".equals(category)) {
+            category = "all";
+        }
+        if (language == null || "_".equals(language)) {
+            language = "all";
+        }
         String url = String.format(EXPLORE_URL, category, language);
         log.info("Crawling Gitee explore: {} period={}", url, period);
 

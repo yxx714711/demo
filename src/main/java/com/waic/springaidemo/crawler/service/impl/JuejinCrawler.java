@@ -65,7 +65,7 @@ public class JuejinCrawler implements Crawler {
     public FetchResult crawl(FetchRequest context) {
         FetchCoordinate coordinate = context.getCoordinate();
         String category = coordinate.category();
-        String url = ("all".equals(category) || "_".equals(category))
+        String url = (category == null || "all".equals(category))
                 ? HOT_URL_ALL
                 : String.format(HOT_URL, category);
         log.info("Crawling Juejin hot articles: {}", url);

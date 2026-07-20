@@ -77,7 +77,7 @@ public class GithubCrawler implements Crawler {
         FetchCoordinate coordinate = context.getCoordinate();
         String periodParam = mapPeriod(coordinate.period());
         String lang = coordinate.language();
-        String langParam = ("all".equals(lang) || "_".equals(lang)) ? "" : lang;
+        String langParam = (lang == null || "all".equals(lang)) ? "" : lang;
         String url = String.format(TRENDING_URL, langParam, periodParam);
         log.info("正在抓取 GitHub 热门仓库: {}", url);
 

@@ -132,7 +132,7 @@ public interface Crawler {
 
     /**
      * 判断单个维度值是否合法：
-     * 维度值为 null/空/"_" 表示未指定，不约束；
+     * 维度值为 null/空 表示未指定，不约束；
      * 维度值已指定时，若 crawler 不使用该维度（allowed 为空）则不支持，否则必须在允许列表内。
      *
      * @param allowed 该 crawler 支持的维度值列表
@@ -140,7 +140,7 @@ public interface Crawler {
      * @return 是否合法
      */
     private boolean matchDimension(List<String> allowed, String value) {
-        if (value == null || value.isBlank() || "_".equals(value)) {
+        if (value == null || value.isBlank()) {
             return true;
         }
         if (allowed.isEmpty()) {

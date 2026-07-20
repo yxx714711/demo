@@ -188,7 +188,7 @@ public class PipelineServiceImpl implements PipelineService {
      */
     private static String contentKey(FetchResult fr, HotItem item) {
         FetchCoordinate coordinate = fr.getCoordinate();
-        return coordinate.source() + "|" + coordinate.category() + "|" + coordinate.language() + "|" + item.getId();
+        return coordinate.source() + "|" + coordinate.normalizedCategory() + "|" + coordinate.normalizedLanguage() + "|" + item.getId();
     }
 
     // ===== 递归聚合编排（D1/D7/D8） =====
@@ -207,8 +207,8 @@ public class PipelineServiceImpl implements PipelineService {
         for (FetchResult fr : results) {
             FetchCoordinate coordinate = fr.getCoordinate();
             tree.computeIfAbsent(coordinate.source(), k -> new LinkedHashMap<>())
-                    .computeIfAbsent(coordinate.category(), k -> new LinkedHashMap<>())
-                    .put(coordinate.language(), fr);
+                    .computeIfAbsent(coordinate.normalizedCategory(), k -> new LinkedHashMap<>())
+                    .put(coordinate.normalizedLanguage(), fr);
         }
 
         int sourceCount = tree.size();
