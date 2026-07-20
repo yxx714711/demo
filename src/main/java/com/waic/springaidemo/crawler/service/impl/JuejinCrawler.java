@@ -64,9 +64,10 @@ public class JuejinCrawler implements Crawler {
     @Override
     public FetchResult crawl(FetchRequest context) {
         FetchCoordinate coordinate = context.getCoordinate();
-        String url = "all".equals(coordinate.category())
+        String category = coordinate.category();
+        String url = ("all".equals(category) || "_".equals(category))
                 ? HOT_URL_ALL
-                : String.format(HOT_URL, coordinate.category());
+                : String.format(HOT_URL, category);
         log.info("Crawling Juejin hot articles: {}", url);
 
         // 掘金为 Nuxt SSR/SPA，Jsoup 直连会被反爬返回空壳，故直接走 Playwright，
