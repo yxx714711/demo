@@ -2,14 +2,15 @@ package com.waic.springaidemo.common.entity;
 
 import com.waic.springaidemo.common.enums.DataSourceEnum;
 import com.waic.springaidemo.common.enums.PeriodEnum;
+import org.springframework.util.StringUtils;
 
 import java.time.LocalDate;
 
 /**
  * 抓取切片坐标：唯一确定一次抓取或一份 hotitems.json 的维度。
- * <p>请求侧允许 category/language 为 null（表示未指定维度）；
- * 持久化侧通过 {@link #normalizedCategory()} / {@link #normalizedLanguage()}
- * 将 null/blank 统一为 "_"，与文件路径和摘要树叶子层约定保持一致。</p>
+ * <p>由 period + date + source + category + language 组成。category/language 对某个
+ * 数据源不适用时保持为 {@code null}（如 GitHub 无 category、掘金无 language），不再用占位符；
+ * 与文件路径、摘要树约定保持一致：未指定的维度既不进内存值，也不生成对应目录段。</p>
  */
 public record FetchCoordinate(
         PeriodEnum period,
@@ -19,11 +20,13 @@ public record FetchCoordinate(
         String language
 ) {
 
-    public String normalizedCategory() {
-        return (category == null || category.isBlank()) ? "_" : category;
-    }
-
-    public String normalizedLanguage() {
-        return (language == null || language.isBlank()) ? "_" : language;
+    public FetchCoordinate {
+        // 空白串统一规约为 null：未指定维度要么是真实非空值，要么是 null，绝不留空白/占位符
+        if (!StringUtils.hasText(category)) {
+            category = null;
+        }
+        if (!StringUtils.hasText(language)) {
+            language = null;
+        }
     }
 }

@@ -2,7 +2,6 @@ package com.waic.springaidemo.crawler.service.impl;
 
 import com.waic.springaidemo.crawler.config.CrawlerProperties;
 import com.waic.springaidemo.common.entity.FetchCoordinate;
-import com.waic.springaidemo.common.entity.FetchRequest;
 import com.waic.springaidemo.common.entity.FetchResult;
 import com.waic.springaidemo.common.entity.HotItem;
 import com.waic.springaidemo.common.enums.DataSourceEnum;
@@ -27,7 +26,6 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Base64;
-import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -42,8 +40,6 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class GithubCrawler implements Crawler {
 
-    private static final String TRENDING_URL = "https://github.com/trending/%s?since=%s";
-    private static final String API_README_URL = "https://api.github.com/repos/%s/%s/readme";
     private static final int[] RETRYABLE_STATUS = {429, 500, 502, 503, 504};
 
     private final CrawlerProperties crawlerProperties;
@@ -57,7 +53,7 @@ public class GithubCrawler implements Crawler {
     }
 
     @Override
-    public List<PeriodEnum> getSupportedPeriods() {
+    public List<PeriodEnum> getPeriods() {
         return Arrays.asList(PeriodEnum.DAILY, PeriodEnum.WEEKLY, PeriodEnum.MONTHLY);
     }
 
@@ -73,12 +69,10 @@ public class GithubCrawler implements Crawler {
     }
 
     @Override
-    public FetchResult crawl(FetchRequest context) {
-        FetchCoordinate coordinate = context.getCoordinate();
+    public FetchResult crawl(FetchCoordinate coordinate) {
         String periodParam = mapPeriod(coordinate.period());
-        String lang = coordinate.language();
-        String langParam = (lang == null || "all".equals(lang)) ? "" : lang;
-        String url = String.format(TRENDING_URL, langParam, periodParam);
+        String langParam = "all".equals(coordinate.language()) ? "" : coordinate.language();
+        String url = String.format(crawlerProperties.getGithub().getHotBaseUrl(), langParam, periodParam);
         log.info("正在抓取 GitHub 热门仓库: {}", url);
 
         Document document = pageFetcherUtil.fetchDocument(url, "article.Box-row",
@@ -95,7 +89,7 @@ public class GithubCrawler implements Crawler {
             if (count >= topN) {
                 break;
             }
-            HotItem item = parseRow(row, context);
+            HotItem item = parseRow(row, coordinate);
             if (item == null) {
                 continue;
             }
@@ -109,7 +103,7 @@ public class GithubCrawler implements Crawler {
                 .build();
     }
 
-    private HotItem parseRow(Element row, FetchRequest context) {
+    private HotItem parseRow(Element row, FetchCoordinate coordinate) {
         Element linkElement = row.selectFirst("h2 a");
         if (linkElement == null) {
             return null;
@@ -131,8 +125,7 @@ public class GithubCrawler implements Crawler {
                 .id("github_" + repoPath.replace("/", "_"))
                 .title(title)
                 .url(fullUrl)
-                .summary(description)
-                .fetchedAt(LocalDateTime.now())
+                .description(description)
                 .build();
     }
 
@@ -159,7 +152,7 @@ public class GithubCrawler implements Crawler {
      * 429/5xx/网络异常 -> 重试；404/400/403(非限流) -> 直接结束。
      */
     private boolean tryDownloadViaApi(String owner, String repo, HotItem item, FetchResult result) {
-        String url = String.format(API_README_URL, owner, repo);
+        String url = String.format(crawlerProperties.getGithub().getContentBaseUrl(), owner, repo);
         int maxRetries = 3;
         int attempt = 0;
         while (true) {

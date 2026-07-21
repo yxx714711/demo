@@ -2,7 +2,6 @@ package com.waic.springaidemo.crawler.service.impl;
 
 import com.waic.springaidemo.crawler.config.CrawlerProperties;
 import com.waic.springaidemo.common.entity.FetchCoordinate;
-import com.waic.springaidemo.common.entity.FetchRequest;
 import com.waic.springaidemo.common.entity.FetchResult;
 import com.waic.springaidemo.common.entity.HotItem;
 import com.waic.springaidemo.common.enums.DataSourceEnum;
@@ -22,7 +21,6 @@ import org.springframework.util.CollectionUtils;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -34,9 +32,6 @@ import java.util.List;
 @RequiredArgsConstructor
 public class JuejinCrawler implements Crawler {
 
-    private static final String HOT_URL = "https://juejin.cn/hot/articles/%s";
-    private static final String HOT_URL_ALL = "https://juejin.cn/hot/articles";
-
     private final CrawlerProperties crawlerProperties;
     private final PageFetcherUtil pageFetcherUtil;
 
@@ -46,7 +41,7 @@ public class JuejinCrawler implements Crawler {
     }
 
     @Override
-    public List<PeriodEnum> getSupportedPeriods() {
+    public List<PeriodEnum> getPeriods() {
         return List.of(PeriodEnum.DAILY);
     }
 
@@ -62,12 +57,10 @@ public class JuejinCrawler implements Crawler {
     }
 
     @Override
-    public FetchResult crawl(FetchRequest context) {
-        FetchCoordinate coordinate = context.getCoordinate();
-        String category = coordinate.category();
-        String url = (category == null || "all".equals(category))
-                ? HOT_URL_ALL
-                : String.format(HOT_URL, category);
+    public FetchResult crawl(FetchCoordinate coordinate) {
+        String url = "all".equals(coordinate.category())
+                ? crawlerProperties.getJuejin().getHotBaseUrl()
+                : crawlerProperties.getJuejin().getHotBaseUrl() + "/" + coordinate.category();
         log.info("Crawling Juejin hot articles: {}", url);
 
         // 掘金为 Nuxt SSR/SPA，Jsoup 直连会被反爬返回空壳，故直接走 Playwright，
@@ -85,7 +78,7 @@ public class JuejinCrawler implements Crawler {
             if (count >= topN) {
                 break;
             }
-            HotItem item = parseItem(itemElement, context);
+            HotItem item = parseItem(itemElement, coordinate);
             if (item == null) {
                 continue;
             }
@@ -99,7 +92,7 @@ public class JuejinCrawler implements Crawler {
                 .build();
     }
 
-    private HotItem parseItem(Element itemElement, FetchRequest context) {
+    private HotItem parseItem(Element itemElement, FetchCoordinate coordinate) {
         // itemElement 本身就是 a.article-item-link，href 即文章链接
         String relativeUrl = itemElement.attr("href");
         if (relativeUrl.isBlank()) {
@@ -122,8 +115,7 @@ public class JuejinCrawler implements Crawler {
                 .id("juejin_" + slug)
                 .title(title)
                 .url(fullUrl)
-                .summary(description)
-                .fetchedAt(LocalDateTime.now())
+                .description(description)
                 .build();
     }
 

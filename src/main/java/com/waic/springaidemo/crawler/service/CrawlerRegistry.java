@@ -1,9 +1,6 @@
 package com.waic.springaidemo.crawler.service;
 
-import com.waic.springaidemo.common.entity.FetchRequest;
-import com.waic.springaidemo.common.entity.FetchResult;
-import com.waic.springaidemo.common.enums.DataSourceEnum;
-import com.waic.springaidemo.common.enums.PeriodEnum;
+import com.waic.springaidemo.common.entity.FetchCoordinate;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -33,33 +30,18 @@ public class CrawlerRegistry {
     }
 
     /**
-     * 根据请求查找支持的抓取器（列表侧）。
+     * 根据抓取坐标查找支持的抓取器（列表侧）。
      * 无匹配时返回 empty，由调用方决定是优雅跳过还是抛异常。
      *
-     * @param request 抓取请求
+     * @param coordinate 抓取坐标
      * @return 抓取器（可能为 empty）
      */
-    public Optional<Crawler> resolve(FetchRequest request) {
+    public Optional<Crawler> resolve(FetchCoordinate coordinate) {
         for (Crawler crawler : crawlers) {
-            if (crawler.supports(request)) {
+            if (crawler.supports(coordinate)) {
                 return Optional.of(crawler);
             }
         }
         return Optional.empty();
-    }
-
-    /**
-     * 根据已落盘的抓取结果反查对应的抓取器（用于正文下载）。
-     * 内部以结果重建 FetchRequest 后复用 {@link #resolve(FetchRequest)} 的定位逻辑。
-     * 若无可下载的数据源（如纯列表源）返回 empty，由调用方优雅跳过。
-     *
-     * @param result 抓取结果
-     * @return 抓取器（可能为 empty）
-     */
-    public Optional<Crawler> resolve(FetchResult result) {
-        FetchRequest request = FetchRequest.builder()
-                .coordinate(result.getCoordinate())
-                .build();
-        return resolve(request);
     }
 }
