@@ -169,7 +169,7 @@ public class PipelineServiceImpl implements PipelineService {
                     continue; // 已下载，跳过
                 }
                 try {
-                    crawler.download(item, result);
+                    crawler.download(item, result.getCoordinate());
                 } catch (IOException e) {
                     log.warn("Download failed for item {} ({}): {}", item.getId(), item.getTitle(), e.getMessage());
                     // contentPath 保持 "PENDING"，供后续重试

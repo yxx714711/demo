@@ -17,7 +17,7 @@ import java.util.stream.Stream;
  *
  * <p>本接口在维度模型（source + period + category + language）基础上，
  * 提供了 {@link #supports(FetchCoordinate)} / {@link #buildFetchCoordinates(LocalDate, PeriodEnum)}
- * 的默认实现。子类只需实现 5 个取值器与 {@link #crawl(FetchCoordinate)} / {@link #download(HotItem, FetchResult)}，
+ * 的默认实现。子类只需实现 5 个取值器与 {@link #crawl(FetchCoordinate)} / {@link #download(HotItem, FetchCoordinate)}，
  * 无需重复维度展开逻辑。
  */
 public interface Crawler {
@@ -102,13 +102,13 @@ public interface Crawler {
 
     /**
      * 正文侧：下载热门项的内容文件（如 README、文章正文）。
-     * 基于列表侧已落盘的 {@link FetchResult} 工作。
+     * 基于列表侧已落盘的 {@link FetchCoordinate} 工作，仅用于确定文件落盘路径。
      *
-     * @param item   热门项
-     * @param result 对应的抓取结果（提供坐标 FetchCoordinate、更新正文路径 contentPath）
+     * @param item       热门项
+     * @param coordinate 对应的抓取坐标（提供 source/period/date/category/language）
      * @throws IOException 下载失败时抛出
      */
-    void download(HotItem item, FetchResult result) throws IOException;
+    void download(HotItem item, FetchCoordinate coordinate) throws IOException;
 
     /**
      * 判断单个维度值是否合法：

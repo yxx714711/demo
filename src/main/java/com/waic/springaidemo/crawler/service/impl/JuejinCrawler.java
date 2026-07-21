@@ -120,7 +120,7 @@ public class JuejinCrawler implements Crawler {
     }
 
     @Override
-    public void download(HotItem item, FetchResult result) throws IOException {
+    public void download(HotItem item, FetchCoordinate coordinate) throws IOException {
         // 详情页同样走 Playwright，并等待正文容器 #article-root 渲染完成。
         Document document = pageFetcherUtil.fetchDocument(item.getUrl(), "#article-root", null);
         Element articleElement = document.selectFirst("#article-root");
@@ -135,7 +135,6 @@ public class JuejinCrawler implements Crawler {
             item.setContentPath("");
             return;
         }
-        FetchCoordinate coordinate = result.getCoordinate();
         String slug = extractSlug(item.getUrl());
         Path contentFilePath = FilePathUtils.getContentFilePath(coordinate.source(), coordinate.period(),
                 coordinate.date(), coordinate.category(), coordinate.language(), slug);

@@ -40,8 +40,6 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class GithubCrawler implements Crawler {
 
-    private static final int[] RETRYABLE_STATUS = {429, 500, 502, 503, 504};
-
     private final CrawlerProperties crawlerProperties;
     private final PageFetcherUtil pageFetcherUtil;
     private final HttpUtil httpUtil;
@@ -70,7 +68,7 @@ public class GithubCrawler implements Crawler {
 
     @Override
     public FetchResult crawl(FetchCoordinate coordinate) {
-        String periodParam = mapPeriod(coordinate.period());
+        String periodParam = getPeriod(coordinate.period());
         String langParam = "all".equals(coordinate.language()) ? "" : coordinate.language();
         String url = String.format(crawlerProperties.getGithub().getHotBaseUrl(), langParam, periodParam);
         log.info("正在抓取 GitHub 热门仓库: {}", url);
@@ -83,13 +81,13 @@ public class GithubCrawler implements Crawler {
         }
 
         List<HotItem> items = new ArrayList<>();
-        int topN = resolveTopN(coordinate.period());
+        int topN = getTopN(coordinate.period());
         int count = 0;
         for (Element row : rows) {
             if (count >= topN) {
                 break;
             }
-            HotItem item = parseRow(row, coordinate);
+            HotItem item = parseItem(row, coordinate);
             if (item == null) {
                 continue;
             }
@@ -103,7 +101,7 @@ public class GithubCrawler implements Crawler {
                 .build();
     }
 
-    private HotItem parseRow(Element row, FetchCoordinate coordinate) {
+    private HotItem parseItem(Element row, FetchCoordinate coordinate) {
         Element linkElement = row.selectFirst("h2 a");
         if (linkElement == null) {
             return null;
@@ -129,8 +127,25 @@ public class GithubCrawler implements Crawler {
                 .build();
     }
 
+    private String getPeriod(PeriodEnum period) {
+        return switch (period) {
+            case DAILY -> "daily";
+            case WEEKLY -> "weekly";
+            case MONTHLY -> "monthly";
+        };
+    }
+
+    private int getTopN(PeriodEnum period) {
+        CrawlerProperties.TopNConfig topN = crawlerProperties.getGithub().getTopN();
+        return switch (period) {
+            case DAILY -> topN.getDaily();
+            case WEEKLY -> topN.getWeekly();
+            case MONTHLY -> topN.getMonthly();
+        };
+    }
+
     @Override
-    public void download(HotItem item, FetchResult result) throws IOException {
+    public void download(HotItem item, FetchCoordinate coordinate) throws IOException {
         String repoPath = item.getUrl().replace("https://github.com/", "");
         String[] parts = repoPath.split("/");
         if (parts.length < 2) {
@@ -139,7 +154,7 @@ public class GithubCrawler implements Crawler {
         String owner = parts[0];
         String repo = parts[1];
 
-        if (tryDownloadViaApi(owner, repo, item, result)) {
+        if (tryDownloadViaApi(owner, repo, item, coordinate)) {
             return;
         }
         throw new IOException("Failed to download README for " + item.getTitle()
@@ -149,68 +164,52 @@ public class GithubCrawler implements Crawler {
     /**
      * 主路径：GitHub Contents API，自动解析默认分支与 README 文件名。
      * 200 且 content 非空 -> base64 解码写入；302 或 content 为空但有 download_url -> 直接取该 raw 地址。
-     * 429/5xx/网络异常 -> 重试；404/400/403(非限流) -> 直接结束。
+     * 其他状态码或网络异常 -> 直接结束。
      */
-    private boolean tryDownloadViaApi(String owner, String repo, HotItem item, FetchResult result) {
+    private boolean tryDownloadViaApi(String owner, String repo, HotItem item, FetchCoordinate coordinate) {
         String url = String.format(crawlerProperties.getGithub().getContentBaseUrl(), owner, repo);
-        int maxRetries = 3;
-        int attempt = 0;
-        while (true) {
-            try {
-                HttpResponse<String> response = httpUtil.getNoFollow(url,
-                        Map.of("Accept", "application/vnd.github+json"));
-                int code = response.statusCode();
-                if (code == 200) {
-                    String content = extractApiContent(response.body());
-                    if (content != null) {
-                        saveContent(content, item, result);
-                        return true;
-                    }
-                    String downloadUrl = extractApiDownloadUrl(response.body());
-                    if (downloadUrl != null) {
-                        return fetchRawAndSave(downloadUrl, item, result);
-                    }
-                    return false;
+        try {
+            HttpResponse<String> response = httpUtil.getNoFollow(url,
+                    Map.of("Accept", "application/vnd.github+json"));
+            int code = response.statusCode();
+            if (code == 200) {
+                String content = extractApiContent(response.body());
+                if (content != null) {
+                    saveContent(content, item, coordinate);
+                    return true;
                 }
-                if (code == 301 || code == 302) {
-                    String location = response.headers().firstValue("Location").orElse(null);
-                    if (location != null) {
-                        return fetchRawAndSave(location, item, result);
-                    }
-                    return false;
-                }
-                if (isRetryable(code, response)) {
-                    if (attempt < maxRetries) {
-                        attempt++;
-                        continue;
-                    }
-                    return false;
-                }
-                return false;
-            } catch (IOException e) {
-                if (attempt < maxRetries) {
-                    attempt++;
-                    continue;
+                String downloadUrl = extractApiDownloadUrl(response.body());
+                if (downloadUrl != null) {
+                    return fetchRawAndSave(downloadUrl, item, coordinate);
                 }
                 return false;
             }
+            if (code == 301 || code == 302) {
+                String location = response.headers().firstValue("Location").orElse(null);
+                if (location != null) {
+                    return fetchRawAndSave(location, item, coordinate);
+                }
+                return false;
+            }
+            return false;
+        } catch (IOException e) {
+            return false;
         }
     }
 
     /**
      * 对给定 raw 地址做一次 GET 并尝试保存（用于 API 重定向 / download_url 场景，不再重试）
      */
-    private boolean fetchRawAndSave(String url, HotItem item, FetchResult result) throws IOException {
+    private boolean fetchRawAndSave(String url, HotItem item, FetchCoordinate coordinate) throws IOException {
         HttpResponse<String> response = httpUtil.getFollow(url, null);
         if (response.statusCode() == 200) {
-            saveContent(response.body(), item, result);
+            saveContent(response.body(), item, coordinate);
             return true;
         }
         return false;
     }
 
-    private void saveContent(String content, HotItem item, FetchResult result) throws IOException {
-        FetchCoordinate coordinate = result.getCoordinate();
+    private void saveContent(String content, HotItem item, FetchCoordinate coordinate) throws IOException {
         String repoPath = item.getUrl().replace("https://github.com/", "").replace("/", "_");
         Path contentFilePath = FilePathUtils.getContentFilePath(coordinate.source(), coordinate.period(),
                 coordinate.date(), coordinate.category(), coordinate.language(), repoPath);
@@ -252,33 +251,4 @@ public class GithubCrawler implements Crawler {
         return null;
     }
 
-    private boolean isRetryable(int code, HttpResponse<String> response) {
-        for (int retryable : RETRYABLE_STATUS) {
-            if (code == retryable) {
-                return true;
-            }
-        }
-        if (code == 403) {
-            // 限流类 403 会带 Retry-After 头
-            return response != null && response.headers().firstValue("Retry-After").isPresent();
-        }
-        return false;
-    }
-
-    private String mapPeriod(PeriodEnum period) {
-        return switch (period) {
-            case DAILY -> "daily";
-            case WEEKLY -> "weekly";
-            case MONTHLY -> "monthly";
-        };
-    }
-
-    private int resolveTopN(PeriodEnum period) {
-        CrawlerProperties.TopNConfig topN = crawlerProperties.getGithub().getTopN();
-        return switch (period) {
-            case DAILY -> topN.getDaily();
-            case WEEKLY -> topN.getWeekly();
-            case MONTHLY -> topN.getMonthly();
-        };
-    }
 }

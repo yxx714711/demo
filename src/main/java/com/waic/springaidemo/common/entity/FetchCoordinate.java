@@ -29,4 +29,18 @@ public record FetchCoordinate(
             language = null;
         }
     }
+
+    /**
+     * 获取规整后的分类值：未指定时返回 "all"，避免作为 Map 键或路径段时出现 null。
+     */
+    public String normalizedCategory() {
+        return category != null ? category : "all";
+    }
+
+    /**
+     * 获取规整后的语言值：未指定时返回 "all"，避免作为 Map 键或路径段时出现 null。
+     */
+    public String normalizedLanguage() {
+        return language != null ? language : "all";
+    }
 }

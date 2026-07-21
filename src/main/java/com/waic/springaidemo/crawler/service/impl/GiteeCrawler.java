@@ -153,7 +153,7 @@ public class GiteeCrawler implements Crawler {
     }
 
     @Override
-    public void download(HotItem item, FetchResult result) throws IOException {
+    public void download(HotItem item, FetchCoordinate coordinate) throws IOException {
         String repoPath = item.getUrl().replace("https://gitee.com/", "");
         String[] parts = repoPath.split("/");
         if (parts.length < 2) {
@@ -162,7 +162,6 @@ public class GiteeCrawler implements Crawler {
         String owner = parts[0];
         String repo = parts[1];
 
-        FetchCoordinate coordinate = result.getCoordinate();
         for (String branch : SUPPORTED_README_BRANCHES) {
             String rawUrl = String.format(crawlerProperties.getGitee().getContentBaseUrl(), owner, repo, branch);
             HttpResponse<String> response = httpUtil.getFollow(rawUrl, null);
