@@ -66,46 +66,46 @@ public class JuejinCrawler implements Crawler {
         // 掘金为 Nuxt SSR/SPA，Jsoup 直连会被反爬返回空壳，故直接走 Playwright，
         // 并显式等待列表选择器出现后再取内容（避免 waitForLoadState 过早返回空壳）。
         Document document = pageFetcherUtil.fetchDocument(url, "a.article-item-link", null);
-        Elements items = document.select("a.article-item-link");
-        if (items.isEmpty()) {
+        Elements rows = document.select("a.article-item-link");
+        if (rows.isEmpty()) {
             log.warn("No Juejin items found for url: {}", url);
         }
 
-        List<HotItem> hotItems = new ArrayList<>();
+        List<HotItem> items = new ArrayList<>();
         int topN = crawlerProperties.getJuejin().getTopN().getDaily();
         int count = 0;
-        for (Element itemElement : items) {
+        for (Element row : rows) {
             if (count >= topN) {
                 break;
             }
-            HotItem item = parseItem(itemElement, coordinate);
+            HotItem item = parseItem(row);
             if (item == null) {
                 continue;
             }
-            hotItems.add(item);
+            items.add(item);
             count++;
         }
 
         return FetchResult.builder()
                 .coordinate(coordinate)
-                .items(hotItems)
+                .items(items)
                 .build();
     }
 
-    private HotItem parseItem(Element itemElement, FetchCoordinate coordinate) {
-        // itemElement 本身就是 a.article-item-link，href 即文章链接
-        String relativeUrl = itemElement.attr("href");
+    private HotItem parseItem(Element row) {
+        // row 本身就是 a.article-item-link，href 即文章链接
+        String relativeUrl = row.attr("href");
         if (relativeUrl.isBlank()) {
             return null;
         }
         String fullUrl = relativeUrl.startsWith("http") ? relativeUrl : "https://juejin.cn" + relativeUrl;
-        Element titleElement = itemElement.selectFirst(".article-title");
+        Element titleElement = row.selectFirst(".article-title");
         if (titleElement == null) {
             return null;
         }
         String title = titleElement.text().trim();
         String description = "";
-        Element descElement = itemElement.selectFirst(".article-author-name-text");
+        Element descElement = row.selectFirst(".article-author-name-text");
         if (descElement != null) {
             description = "作者: " + descElement.text().trim();
         }

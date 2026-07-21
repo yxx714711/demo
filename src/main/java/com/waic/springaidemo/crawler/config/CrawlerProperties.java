@@ -35,7 +35,7 @@ public class CrawlerProperties {
         private List<String> languages = new ArrayList<>();
         private TopNConfig topN = new TopNConfig();
         private String hotBaseUrl = "https://github.com/trending/%s?since=%s";
-        private String contentBaseUrl = "https://api.github.com/repos/%s/%s/readme";
+        private String contentBaseUrl = "https://raw.githubusercontent.com/%s/%s/%s/README.md";
     }
 
     @Data
