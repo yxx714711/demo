@@ -1,15 +1,15 @@
 package com.waic.springaidemo.crawler.service.impl;
 
 import com.waic.springaidemo.crawler.config.CrawlerProperties;
-import com.waic.springaidemo.common.entity.FetchCoordinate;
-import com.waic.springaidemo.common.entity.FetchResult;
+import com.waic.springaidemo.common.entity.CrawlCoordinate;
+import com.waic.springaidemo.common.entity.CrawlResult;
 import com.waic.springaidemo.common.entity.HotItem;
 import com.waic.springaidemo.common.enums.DataSourceEnum;
 import com.waic.springaidemo.common.enums.PeriodEnum;
-import com.waic.springaidemo.common.utils.FilePathUtils;
+import com.waic.springaidemo.common.exception.ContentNotFoundException;
 import com.waic.springaidemo.crawler.service.Crawler;
 import com.waic.springaidemo.crawler.utils.HttpUtil;
-import com.waic.springaidemo.crawler.utils.PageFetcherUtil;
+import com.waic.springaidemo.crawler.utils.PageCrawlUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.jsoup.nodes.Document;
@@ -20,8 +20,6 @@ import org.springframework.util.CollectionUtils;
 
 import java.io.IOException;
 import java.net.http.HttpResponse;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -42,7 +40,7 @@ public class GiteeCrawler implements Crawler {
     private static final String WEEKLY_TAB_SELECTOR = "[data-tab='weekly-trending'] .explore-trending-projects__list-item";
 
     private final CrawlerProperties crawlerProperties;
-    private final PageFetcherUtil pageFetcherUtil;
+    private final PageCrawlUtil pageCrawlUtil;
     private final HttpUtil httpUtil;
 
     @Override
@@ -68,17 +66,17 @@ public class GiteeCrawler implements Crawler {
     }
 
     @Override
-    public FetchResult crawl(FetchCoordinate coordinate) {
+    public CrawlResult crawl(CrawlCoordinate coordinate) {
         PeriodEnum period = coordinate.period();
         String selector = getTabSelector(period);
         String url = String.format(crawlerProperties.getGitee().getHotBaseUrl(), coordinate.category(), coordinate.language());
         log.info("Crawling Gitee explore: {} period={}", url, period);
 
-        Document document = pageFetcherUtil.fetchDocument(url);
+        Document document = pageCrawlUtil.crawlDocument(url);
 
         List<HotItem> hotItems = parseItems(document, selector, coordinate);
 
-        return FetchResult.builder()
+        return CrawlResult.builder()
                 .coordinate(coordinate)
                 .items(hotItems)
                 .build();
@@ -87,7 +85,7 @@ public class GiteeCrawler implements Crawler {
     /**
      * 解析指定 tab 下的热门项目列表，结果追加到 hotItems
      */
-    private List<HotItem> parseItems(Document document, String selector, FetchCoordinate coordinate) {
+    private List<HotItem> parseItems(Document document, String selector, CrawlCoordinate coordinate) {
         Elements rows = document.select(selector);
         if (rows.isEmpty()) {
             log.warn("No Gitee trending items found for url period: {}", coordinate.period());
@@ -134,6 +132,7 @@ public class GiteeCrawler implements Crawler {
                 .title(title)
                 .url(fullUrl)
                 .description(description)
+                .contentPath(HotItem.CONTENT_PENDING)
                 .build();
     }
 
@@ -153,31 +152,32 @@ public class GiteeCrawler implements Crawler {
     }
 
     @Override
-    public void download(HotItem item, FetchCoordinate coordinate) throws IOException {
+    public String fetchContent(HotItem item) throws IOException, ContentNotFoundException {
         String repoPath = item.getUrl().replace("https://gitee.com/", "");
         String[] parts = repoPath.split("/");
         if (parts.length < 2) {
-            throw new IOException("Invalid repo path: " + item.getUrl());
+            throw new ContentNotFoundException("Invalid repo path: " + item.getUrl());
         }
         String owner = parts[0];
         String repo = parts[1];
 
+        ContentNotFoundException notFound = null;
         for (String branch : SUPPORTED_README_BRANCHES) {
             String rawUrl = String.format(crawlerProperties.getGitee().getContentBaseUrl(), owner, repo, branch);
             HttpResponse<String> response = httpUtil.getFollow(rawUrl, null);
-            if (response.statusCode() == 200) {
-                String content = response.body();
-                String slug = owner + "_" + repo;
-                Path contentFilePath = FilePathUtils.getContentFilePath(coordinate.source(), coordinate.period(),
-                        coordinate.date(), coordinate.category(), coordinate.language(), slug);
-                Files.createDirectories(contentFilePath.getParent());
-                Files.writeString(contentFilePath, content);
-                item.setContentPath(contentFilePath.toString().replace("\\", "/"));
-                log.info("Downloaded README for {} to {}", item.getTitle(), item.getContentPath());
-                return;
+            int status = response.statusCode();
+            if (status == 200) {
+                return response.body();
             }
+            if (status == 404) {
+                notFound = new ContentNotFoundException(
+                        "README not found (404) for " + item.getTitle() + " branch=" + branch);
+                continue;
+            }
+            throw new IOException("Failed to fetch README for " + item.getTitle()
+                    + " branch=" + branch + " status=" + status);
         }
-        throw new IOException("Failed to download README for " + item.getTitle()
-                + " (all branches failed): " + item.getUrl());
+        throw notFound != null ? notFound
+                : new ContentNotFoundException("Failed to download README for " + item.getTitle());
     }
 }

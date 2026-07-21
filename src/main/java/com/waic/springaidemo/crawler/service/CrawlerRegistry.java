@@ -1,6 +1,6 @@
 package com.waic.springaidemo.crawler.service;
 
-import com.waic.springaidemo.common.entity.FetchCoordinate;
+import com.waic.springaidemo.common.entity.CrawlCoordinate;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -36,7 +36,7 @@ public class CrawlerRegistry {
      * @param coordinate 抓取坐标
      * @return 抓取器（可能为 empty）
      */
-    public Optional<Crawler> resolve(FetchCoordinate coordinate) {
+    public Optional<Crawler> resolve(CrawlCoordinate coordinate) {
         for (Crawler crawler : crawlers) {
             if (crawler.supports(coordinate)) {
                 return Optional.of(crawler);

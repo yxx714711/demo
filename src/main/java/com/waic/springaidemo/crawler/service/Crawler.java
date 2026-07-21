@@ -1,10 +1,11 @@
 package com.waic.springaidemo.crawler.service;
 
-import com.waic.springaidemo.common.entity.FetchCoordinate;
-import com.waic.springaidemo.common.entity.FetchResult;
+import com.waic.springaidemo.common.entity.CrawlCoordinate;
+import com.waic.springaidemo.common.entity.CrawlResult;
 import com.waic.springaidemo.common.entity.HotItem;
 import com.waic.springaidemo.common.enums.DataSourceEnum;
 import com.waic.springaidemo.common.enums.PeriodEnum;
+import com.waic.springaidemo.common.exception.ContentNotFoundException;
 import org.springframework.util.StringUtils;
 
 import java.io.IOException;
@@ -16,9 +17,12 @@ import java.util.stream.Stream;
  * 抓取器门面：同时具备列表抓取与正文下载能力。
  *
  * <p>本接口在维度模型（source + period + category + language）基础上，
- * 提供了 {@link #supports(FetchCoordinate)} / {@link #buildFetchCoordinates(LocalDate, PeriodEnum)}
- * 的默认实现。子类只需实现 5 个取值器与 {@link #crawl(FetchCoordinate)} / {@link #download(HotItem, FetchCoordinate)}，
- * 无需重复维度展开逻辑。
+ * 提供了 {@link #supports(CrawlCoordinate)} / {@link #buildFetchCoordinates(LocalDate, PeriodEnum)}
+ * 的默认实现。子类只需实现 5 个取值器与 {@link #crawl(CrawlCoordinate)} / {@link #fetchContent(HotItem)}，
+ * 无需重复维度展开逻辑。</p>
+ *
+ * <p>抓取与持久化解耦：{@link #crawl(CrawlCoordinate)} 产出列表元数据，
+ * {@link #fetchContent(HotItem)} 仅返回正文<b>文本</b>（不含落盘），落盘与 contentPath 回填由持久化层负责。</p>
  */
 public interface Crawler {
 
@@ -28,7 +32,7 @@ public interface Crawler {
      * @param coordinate 抓取坐标
      * @return true 表示支持
      */
-    default boolean supports(FetchCoordinate coordinate) {
+    default boolean supports(CrawlCoordinate coordinate) {
         if (coordinate.source() != getDataSource()) {
             return false;
         }
@@ -48,7 +52,7 @@ public interface Crawler {
      * @param period 周期
      * @return 坐标列表
      */
-    default List<FetchCoordinate> buildFetchCoordinates(LocalDate date, PeriodEnum period) {
+    default List<CrawlCoordinate> buildFetchCoordinates(LocalDate date, PeriodEnum period) {
         if (!getPeriods().contains(period)) {
             return List.of();
         }
@@ -98,17 +102,19 @@ public interface Crawler {
      * @param coordinate 抓取坐标
      * @return 抓取结果
      */
-    FetchResult crawl(FetchCoordinate coordinate);
+    CrawlResult crawl(CrawlCoordinate coordinate);
 
     /**
-     * 正文侧：下载热门项的内容文件（如 README、文章正文）。
-     * 基于列表侧已落盘的 {@link FetchCoordinate} 工作，仅用于确定文件落盘路径。
+     * 正文侧：获取热门项的内容正文（如 README、文章正文）。
+     * <p>仅负责抓取与必要的格式转换（如 HTML→Markdown）并返回<b>文本</b>，
+     * 不负责落盘，也不感知文件路径。落盘与 {@code contentPath} 回填由持久化层完成。</p>
      *
-     * @param item       热门项
-     * @param coordinate 对应的抓取坐标（提供 source/period/date/category/language）
-     * @throws IOException 下载失败时抛出
+     * @param item 热门项（提供 url 等定位信息）
+     * @return 人类可读的正文文本
+     * @throws IOException               瞬时错误（超时、连接抖动等），调用方应保持 PENDING 重试
+     * @throws ContentNotFoundException   正文不存在（404 / 节点缺失 / 空正文），调用方标记 404 不重试
      */
-    void download(HotItem item, FetchCoordinate coordinate) throws IOException;
+    String fetchContent(HotItem item) throws IOException, ContentNotFoundException;
 
     /**
      * 判断单个维度值是否合法：
@@ -129,7 +135,7 @@ public interface Crawler {
         return allowed.contains(value);
     }
 
-    private FetchCoordinate buildCoordinate(LocalDate date, PeriodEnum period, String category, String language) {
-        return new FetchCoordinate(period, date, getDataSource(), category, language);
+    private CrawlCoordinate buildCoordinate(LocalDate date, PeriodEnum period, String category, String language) {
+        return new CrawlCoordinate(getDataSource(), period, date, category, language);
     }
 }

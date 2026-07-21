@@ -2,8 +2,8 @@ package com.waic.springaidemo.pipeline.service.impl;
 
 import com.waic.springaidemo.ai.service.ReportGenerator;
 import com.waic.springaidemo.ai.entity.SummaryContext;
-import com.waic.springaidemo.common.entity.FetchCoordinate;
-import com.waic.springaidemo.common.entity.FetchResult;
+import com.waic.springaidemo.common.entity.CrawlCoordinate;
+import com.waic.springaidemo.common.entity.CrawlResult;
 import com.waic.springaidemo.common.entity.HotItem;
 import com.waic.springaidemo.common.entity.NodeSummary;
 import com.waic.springaidemo.common.entity.ReportResult;
@@ -12,9 +12,10 @@ import com.waic.springaidemo.common.enums.DataSourceEnum;
 import com.waic.springaidemo.common.enums.LevelEnum;
 import com.waic.springaidemo.common.enums.PeriodEnum;
 import com.waic.springaidemo.common.utils.TextSplitter;
+import com.waic.springaidemo.common.exception.ContentNotFoundException;
 import com.waic.springaidemo.crawler.service.Crawler;
 import com.waic.springaidemo.crawler.service.CrawlerRegistry;
-import com.waic.springaidemo.persistence.service.FetchResultRepository;
+import com.waic.springaidemo.persistence.service.CrawlRepository;
 import com.waic.springaidemo.persistence.service.SummaryRepository;
 import com.waic.springaidemo.pipeline.service.PipelineService;
 import lombok.RequiredArgsConstructor;
@@ -55,7 +56,7 @@ public class PipelineServiceImpl implements PipelineService {
     private static final int REPORT_MAX_CHARS = 2000;    // D3：日报上限
 
     private final CrawlerRegistry crawlerRegistry;
-    private final FetchResultRepository fetchResultRepository;
+    private final CrawlRepository crawlRepository;
     private final SummaryRepository summaryRepository;
     private final ReportGenerator reportGenerator;
     @Qualifier("pipelineTaskExecutor")
@@ -69,22 +70,19 @@ public class PipelineServiceImpl implements PipelineService {
     private final Map<PeriodEnum, TaskState> taskStates = new ConcurrentHashMap<>();
 
     @Override
-    public List<FetchResult> runCrawl(LocalDate date, PeriodEnum period) throws IOException {
-        log.info("Running crawl pipeline for date={}, period={}", date, period);
-
-        // Step 1: 抓取元数据（不下载内容）
-        List<FetchResult> results = doCrawl(date, period, crawler -> true, null);
-        return persistAndDownload(results);
-    }
-
-    @Override
-    public List<FetchResult> runCrawlBySource(DataSourceEnum source, LocalDate date, PeriodEnum period) throws IOException {
+    public List<CrawlResult> runCrawl(CrawlCoordinate coordinate) throws IOException {
+        DataSourceEnum source = coordinate.source();
+        PeriodEnum period = coordinate.period();
+        LocalDate date = coordinate.date();
         log.info("Running crawl pipeline for source={}, date={}, period={}", source, date, period);
 
-        // Step 1: 抓取指定数据源的元数据（不下载内容）
-        FetchCoordinate probe = new FetchCoordinate(period, date, source, null, null);
-        List<FetchResult> results = doCrawl(date, period, crawler -> crawler.supports(probe),
-                "No crawler supports source=" + source + ", period=" + period);
+        // source 为 null 表示全量（所有数据源）；否则仅匹配指定源。
+        // category/language 维度本方法忽略，由 crawler 内部 buildFetchCoordinates 决定。
+        // 统一行为：无匹配抓取器时静默返回空列表（noMatchMessage=null）。
+        Predicate<Crawler> crawlerFilter = source == null
+                ? crawler -> true
+                : crawler -> crawler.supports(coordinate);
+        List<CrawlResult> results = doCrawl(date, period, crawlerFilter);
         return persistAndDownload(results);
     }
 
@@ -94,26 +92,29 @@ public class PipelineServiceImpl implements PipelineService {
      * 单个请求抓取失败时跳过并继续，不影响其他请求。
      * 若没有任何抓取器通过过滤且 noMatchMessage 非 null，抛出 IllegalStateException。
      */
-    private List<FetchResult> doCrawl(LocalDate date, PeriodEnum period,
-                                      Predicate<Crawler> crawlerFilter, String noMatchMessage) {
-        List<FetchResult> results = new ArrayList<>();
+    private List<CrawlResult> doCrawl(LocalDate date, PeriodEnum period,
+                                      Predicate<Crawler> crawlerFilter) {
+        List<CrawlResult> results = new ArrayList<>();
         boolean anyMatched = false;
         for (Crawler crawler : crawlerRegistry.getAllCrawlers()) {
             if (!crawlerFilter.test(crawler)) {
                 continue;
             }
             anyMatched = true;
-            for (FetchCoordinate coordinate : crawler.buildFetchCoordinates(date, period)) {
+            for (CrawlCoordinate coordinate : crawler.buildFetchCoordinates(date, period)) {
                 try {
-                    results.add(crawler.crawl(coordinate));
+                    CrawlResult fr = crawler.crawl(coordinate);
+                    // crawl 阶段统一将所有 item 标为待下载；复用逻辑在 persistAndDownload 中按已有路径覆盖
+                    fr.getItems().forEach(i -> i.setContentPath(HotItem.CONTENT_PENDING));
+                    results.add(fr);
                 } catch (Exception e) {
                     log.warn("Crawl failed for {} coordinate={}, skipping",
                             crawler.getClass().getSimpleName(), coordinate, e);
                 }
             }
         }
-        if (noMatchMessage != null && !anyMatched) {
-            throw new IllegalStateException(noMatchMessage);
+        if (!anyMatched) {
+            throw new IllegalStateException();
         }
         return results;
     }
@@ -123,59 +124,64 @@ public class PipelineServiceImpl implements PipelineService {
      * 已落盘且 contentPath 非 PENDING 的 item 直接复用旧路径（不重复下载），
      * 仅对 contentPath 为 "PENDING" 的 item 发起下载；单条失败保持 PENDING 供续跑。
      */
-    private List<FetchResult> persistAndDownload(List<FetchResult> results) throws IOException {
+    private List<CrawlResult> persistAndDownload(List<CrawlResult> results) throws IOException {
         if (results.isEmpty()) {
             return results;
         }
-        FetchCoordinate firstCoordinate = results.get(0).getCoordinate();
+        CrawlCoordinate firstCoordinate = results.get(0).getCoordinate();
         LocalDate date = firstCoordinate.date();
         PeriodEnum period = firstCoordinate.period();
 
         // 预载已有「已下载」contentPath：key = source|category|language|itemId
         Map<String, String> existingPaths = new HashMap<>();
         Set<DataSourceEnum> sources = new java.util.LinkedHashSet<>();
-        for (FetchResult fr : results) {
+        for (CrawlResult fr : results) {
             sources.add(fr.getCoordinate().source());
         }
         for (DataSourceEnum src : sources) {
-            List<FetchResult> existing = fetchResultRepository.loadByDate(src, period, date);
-            for (FetchResult ex : existing) {
+            List<CrawlResult> existing = crawlRepository.loadItems(new CrawlCoordinate(src, period, date, null, null));
+            for (CrawlResult ex : existing) {
                 for (HotItem it : ex.getItems()) {
-                    if (it.getContentPath() != null && !"PENDING".equals(it.getContentPath())) {
+                    if (it.getContentPath() != null && !HotItem.CONTENT_PENDING.equals(it.getContentPath())) {
                         existingPaths.put(contentKey(ex, it), it.getContentPath());
                     }
                 }
             }
         }
 
-        for (FetchResult result : results) {
+        for (CrawlResult result : results) {
             for (HotItem item : result.getItems()) {
                 String reused = existingPaths.get(contentKey(result, item));
-                item.setContentPath(reused != null ? reused : "PENDING");
+                item.setContentPath(reused != null ? reused : HotItem.CONTENT_PENDING);
             }
-            fetchResultRepository.save(result);
+            crawlRepository.saveItems(result);
         }
         log.info("Saved {} fetch results (reusing existing content where available)", results.size());
 
-        for (FetchResult result : results) {
+        for (CrawlResult result : results) {
             Crawler crawler = crawlerRegistry.resolve(result.getCoordinate()).orElse(null);
             if (crawler == null) {
-                log.info("无正文下载器，跳过正文抓取 source={}", result.getCoordinate().source());
-                fetchResultRepository.updateItems(result);
+                log.info("无正文下载器，标记无正文 source={}", result.getCoordinate().source());
+                result.getItems().forEach(i -> i.setContentPath(HotItem.CONTENT_NOT_FOUND));
+                crawlRepository.updateItems(result);
                 continue;
             }
             for (HotItem item : result.getItems()) {
-                if (!"PENDING".equals(item.getContentPath())) {
-                    continue; // 已下载，跳过
+                if (!HotItem.CONTENT_PENDING.equals(item.getContentPath())) {
+                    continue; // 已下载或已标记 404，跳过
                 }
                 try {
-                    crawler.download(item, result.getCoordinate());
+                    String text = crawler.fetchContent(item);
+                    crawlRepository.saveContent(result.getCoordinate(), item, text);
+                } catch (ContentNotFoundException e) {
+                    item.setContentPath(HotItem.CONTENT_NOT_FOUND);
+                    log.warn("Content not found for item {} ({}): {}", item.getId(), item.getTitle(), e.getMessage());
                 } catch (IOException e) {
-                    log.warn("Download failed for item {} ({}): {}", item.getId(), item.getTitle(), e.getMessage());
-                    // contentPath 保持 "PENDING"，供后续重试
+                    log.warn("Fetch content failed for item {} ({}): {}", item.getId(), item.getTitle(), e.getMessage());
+                    // contentPath 保持 PENDING，供后续重试
                 }
             }
-            fetchResultRepository.updateItems(result);
+            crawlRepository.updateItems(result);
         }
         return results;
     }
@@ -183,8 +189,8 @@ public class PipelineServiceImpl implements PipelineService {
     /**
      * 断点续跑用的 item 定位键（同 source/category/language 下按 itemId 区分）。
      */
-    private static String contentKey(FetchResult fr, HotItem item) {
-        FetchCoordinate coordinate = fr.getCoordinate();
+    private static String contentKey(CrawlResult fr, HotItem item) {
+        CrawlCoordinate coordinate = fr.getCoordinate();
         return coordinate.source() + "|" + coordinate.normalizedCategory() + "|" + coordinate.normalizedLanguage() + "|" + item.getId();
     }
 
@@ -192,7 +198,7 @@ public class PipelineServiceImpl implements PipelineService {
 
     @Override
     public ReportResult generateReport(PeriodEnum period, LocalDate date, boolean force) throws IOException {
-        List<FetchResult> results = fetchResultRepository.loadAllByDate(period, date);
+        List<CrawlResult> results = crawlRepository.loadItems(period, date);
         log.info("[report] generateReport start period={} date={} force={} fetchResults={}", period, date, force, results.size());
         if (results.isEmpty()) {
             log.warn("No data found for period={} date={}", period, date);
@@ -200,9 +206,9 @@ public class PipelineServiceImpl implements PipelineService {
         }
 
         // 建树：source -> category -> language -> FetchResult（后序遍历）
-        Map<DataSourceEnum, Map<String, Map<String, FetchResult>>> tree = new LinkedHashMap<>();
-        for (FetchResult fr : results) {
-            FetchCoordinate coordinate = fr.getCoordinate();
+        Map<DataSourceEnum, Map<String, Map<String, CrawlResult>>> tree = new LinkedHashMap<>();
+        for (CrawlResult fr : results) {
+            CrawlCoordinate coordinate = fr.getCoordinate();
             tree.computeIfAbsent(coordinate.source(), k -> new LinkedHashMap<>())
                     .computeIfAbsent(coordinate.normalizedCategory(), k -> new LinkedHashMap<>())
                     .put(coordinate.normalizedLanguage(), fr);
@@ -212,18 +218,18 @@ public class PipelineServiceImpl implements PipelineService {
         int categoryCount = 0;
         List<NodeSummary> sourceSummaries = new ArrayList<>();
 
-        for (Map.Entry<DataSourceEnum, Map<String, Map<String, FetchResult>>> srcEntry : tree.entrySet()) {
+        for (Map.Entry<DataSourceEnum, Map<String, Map<String, CrawlResult>>> srcEntry : tree.entrySet()) {
             DataSourceEnum source = srcEntry.getKey();
-            Map<String, Map<String, FetchResult>> cats = srcEntry.getValue();
+            Map<String, Map<String, CrawlResult>> cats = srcEntry.getValue();
             categoryCount += cats.size();
 
             List<NodeSummary> categorySummaries = new ArrayList<>();
-            for (Map.Entry<String, Map<String, FetchResult>> catEntry : cats.entrySet()) {
+            for (Map.Entry<String, Map<String, CrawlResult>> catEntry : cats.entrySet()) {
                 String category = catEntry.getKey();
-                Map<String, FetchResult> langs = catEntry.getValue();
+                Map<String, CrawlResult> langs = catEntry.getValue();
 
                 List<NodeSummary> langSummaries = new ArrayList<>();
-                for (Map.Entry<String, FetchResult> langEntry : langs.entrySet()) {
+                for (Map.Entry<String, CrawlResult> langEntry : langs.entrySet()) {
                     langSummaries.add(summarizeLanguage(
                             period, date, source, category, langEntry.getKey(), langEntry.getValue(), force));
                 }
@@ -258,7 +264,7 @@ public class PipelineServiceImpl implements PipelineService {
      * 叶子（language 层）节点：逐篇（ITEM）喂 AI 生成摘要，再聚合为 LANGUAGE 节点。
      */
     private NodeSummary summarizeLanguage(PeriodEnum period, LocalDate date, DataSourceEnum source,
-                                          String category, String language, FetchResult fr, boolean force) throws IOException {
+                                          String category, String language, CrawlResult fr, boolean force) throws IOException {
         SummaryKey langKey = SummaryKey.builder()
                 .period(period).date(date).source(source).category(category).language(language).build();
         if (!force && summaryRepository.existsSummary(langKey)) {
@@ -294,7 +300,7 @@ public class PipelineServiceImpl implements PipelineService {
         }
 
         log.info("[report] compute item node key={} title={}", itemKey, item.getTitle());
-        String content = fetchResultRepository.loadContent(item.getContentPath());
+        String content = crawlRepository.loadContent(item.getContentPath());
 
         String inputText;
         if (content != null && !content.isBlank()) {
@@ -502,7 +508,7 @@ public class PipelineServiceImpl implements PipelineService {
     private void runPipeline(PeriodEnum period, LocalDate date) {
         try {
             log.info("[pipeline] start period={} date={}", period, date);
-            persistAndDownload(doCrawl(date, period, crawler -> true, null));
+            persistAndDownload(doCrawl(date, period, crawler -> true));
             ReportResult report = generateReport(period, date, false);
             updateState(period, TaskStatus.SUCCESS, null);
             log.info("[pipeline] done period={} date={} sourceCount={} categoryCount={} path={}",

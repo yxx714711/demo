@@ -6,21 +6,15 @@ import org.springframework.util.StringUtils;
 
 import java.time.LocalDate;
 
-/**
- * 抓取切片坐标：唯一确定一次抓取或一份 hotitems.json 的维度。
- * <p>由 period + date + source + category + language 组成。category/language 对某个
- * 数据源不适用时保持为 {@code null}（如 GitHub 无 category、掘金无 language），不再用占位符；
- * 与文件路径、摘要树约定保持一致：未指定的维度既不进内存值，也不生成对应目录段。</p>
- */
-public record FetchCoordinate(
+public record CrawlCoordinate(
+        DataSourceEnum source,
         PeriodEnum period,
         LocalDate date,
-        DataSourceEnum source,
         String category,
         String language
 ) {
 
-    public FetchCoordinate {
+    public CrawlCoordinate {
         // 空白串统一规约为 null：未指定维度要么是真实非空值，要么是 null，绝不留空白/占位符
         if (!StringUtils.hasText(category)) {
             category = null;

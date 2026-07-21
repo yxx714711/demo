@@ -15,7 +15,7 @@ import java.util.function.Predicate;
 @Slf4j
 @Component
 @RequiredArgsConstructor
-public class PageFetcherUtil {
+public class PageCrawlUtil {
 
     private final BrowserManager browserManager;
 
@@ -25,8 +25,8 @@ public class PageFetcherUtil {
      * @param url 目标 URL
      * @return Document
      */
-    public Document fetchDocument(String url) {
-        return fetchDocument(url, null, null);
+    public Document crawlDocument(String url) {
+        return crawlDocument(url, null, null);
     }
 
     /**
@@ -37,7 +37,7 @@ public class PageFetcherUtil {
      * @param validator       内容验证器，为 null 时不校验
      * @return Document
      */
-    public Document fetchDocument(String url, String waitForSelector, Predicate<Document> validator) {
+    public Document crawlDocument(String url, String waitForSelector, Predicate<Document> validator) {
         log.info("Fetching document via browser for {} (waitForSelector={})", url, waitForSelector);
         String html = browserManager.withPage(page -> {
             page.navigate(url);

@@ -1,8 +1,8 @@
 package com.waic.springaidemo.pipeline.service;
 
-import com.waic.springaidemo.common.entity.FetchResult;
+import com.waic.springaidemo.common.entity.CrawlCoordinate;
+import com.waic.springaidemo.common.entity.CrawlResult;
 import com.waic.springaidemo.common.entity.ReportResult;
-import com.waic.springaidemo.common.enums.DataSourceEnum;
 import com.waic.springaidemo.common.enums.PeriodEnum;
 
 import java.io.IOException;
@@ -15,25 +15,16 @@ import java.util.List;
 public interface PipelineService {
 
     /**
-     * 执行指定周期的抓取并持久化
+     * 执行抓取并持久化。
+     * <p>以 {@link CrawlCoordinate} 描述抓取请求：{@code source} 为 null 表示全量（所有数据源），
+     * 非 null 表示仅抓取指定数据源；{@code period}/{@code date} 必填。{@code category}/{@code language}
+     * 维度本方法忽略，由 crawler 内部 {@code buildFetchCoordinates} 决定。无匹配抓取器时静默返回空列表。</p>
      *
-     * @param date   日期
-     * @param period 周期
+     * @param coordinate 抓取坐标（见上文语义）
      * @return 抓取结果列表
      * @throws IOException IO 异常
      */
-    List<FetchResult> runCrawl(LocalDate date, PeriodEnum period) throws IOException;
-
-    /**
-     * 执行指定数据源、日期、周期的抓取并持久化
-     *
-     * @param source 数据源
-     * @param date   日期
-     * @param period 周期
-     * @return 抓取结果列表
-     * @throws IOException IO 异常
-     */
-    List<FetchResult> runCrawlBySource(DataSourceEnum source, LocalDate date, PeriodEnum period) throws IOException;
+    List<CrawlResult> runCrawl(CrawlCoordinate coordinate) throws IOException;
 
     /**
      * 递归聚合生成报告（后序遍历 data 树，逐节点调 LLM + 落盘），返回结构化结果。

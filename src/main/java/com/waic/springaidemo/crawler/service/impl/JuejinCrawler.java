@@ -1,15 +1,15 @@
 package com.waic.springaidemo.crawler.service.impl;
 
 import com.waic.springaidemo.crawler.config.CrawlerProperties;
-import com.waic.springaidemo.common.entity.FetchCoordinate;
-import com.waic.springaidemo.common.entity.FetchResult;
+import com.waic.springaidemo.common.entity.CrawlCoordinate;
+import com.waic.springaidemo.common.entity.CrawlResult;
 import com.waic.springaidemo.common.entity.HotItem;
 import com.waic.springaidemo.common.enums.DataSourceEnum;
 import com.waic.springaidemo.common.enums.PeriodEnum;
-import com.waic.springaidemo.common.utils.FilePathUtils;
+import com.waic.springaidemo.common.exception.ContentNotFoundException;
 import com.waic.springaidemo.crawler.service.Crawler;
 import com.waic.springaidemo.crawler.utils.Html2MarkdownUtil;
-import com.waic.springaidemo.crawler.utils.PageFetcherUtil;
+import com.waic.springaidemo.crawler.utils.PageCrawlUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.jsoup.nodes.Document;
@@ -19,8 +19,6 @@ import org.springframework.stereotype.Component;
 import org.springframework.util.CollectionUtils;
 
 import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -33,7 +31,7 @@ import java.util.List;
 public class JuejinCrawler implements Crawler {
 
     private final CrawlerProperties crawlerProperties;
-    private final PageFetcherUtil pageFetcherUtil;
+    private final PageCrawlUtil pageCrawlUtil;
 
     @Override
     public DataSourceEnum getDataSource() {
@@ -57,7 +55,7 @@ public class JuejinCrawler implements Crawler {
     }
 
     @Override
-    public FetchResult crawl(FetchCoordinate coordinate) {
+    public CrawlResult crawl(CrawlCoordinate coordinate) {
         String url = "all".equals(coordinate.category())
                 ? crawlerProperties.getJuejin().getHotBaseUrl()
                 : crawlerProperties.getJuejin().getHotBaseUrl() + "/" + coordinate.category();
@@ -65,7 +63,7 @@ public class JuejinCrawler implements Crawler {
 
         // 掘金为 Nuxt SSR/SPA，Jsoup 直连会被反爬返回空壳，故直接走 Playwright，
         // 并显式等待列表选择器出现后再取内容（避免 waitForLoadState 过早返回空壳）。
-        Document document = pageFetcherUtil.fetchDocument(url, "a.article-item-link", null);
+        Document document = pageCrawlUtil.crawlDocument(url, "a.article-item-link", null);
         Elements rows = document.select("a.article-item-link");
         if (rows.isEmpty()) {
             log.warn("No Juejin items found for url: {}", url);
@@ -86,7 +84,7 @@ public class JuejinCrawler implements Crawler {
             count++;
         }
 
-        return FetchResult.builder()
+        return CrawlResult.builder()
                 .coordinate(coordinate)
                 .items(items)
                 .build();
@@ -116,32 +114,23 @@ public class JuejinCrawler implements Crawler {
                 .title(title)
                 .url(fullUrl)
                 .description(description)
+                .contentPath(HotItem.CONTENT_PENDING)
                 .build();
     }
 
     @Override
-    public void download(HotItem item, FetchCoordinate coordinate) throws IOException {
+    public String fetchContent(HotItem item) throws IOException, ContentNotFoundException {
         // 详情页同样走 Playwright，并等待正文容器 #article-root 渲染完成。
-        Document document = pageFetcherUtil.fetchDocument(item.getUrl(), "#article-root", null);
+        Document document = pageCrawlUtil.crawlDocument(item.getUrl(), "#article-root", null);
         Element articleElement = document.selectFirst("#article-root");
         if (articleElement == null) {
-            log.warn("Article content not found for url: {}", item.getUrl());
-            item.setContentPath("");
-            return;
+            throw new ContentNotFoundException("Article content not found for url: " + item.getUrl());
         }
         String content = Html2MarkdownUtil.convert(articleElement);
         if (content.isBlank()) {
-            log.warn("Article content is blank for url: {}", item.getUrl());
-            item.setContentPath("");
-            return;
+            throw new ContentNotFoundException("Article content is blank for url: " + item.getUrl());
         }
-        String slug = extractSlug(item.getUrl());
-        Path contentFilePath = FilePathUtils.getContentFilePath(coordinate.source(), coordinate.period(),
-                coordinate.date(), coordinate.category(), coordinate.language(), slug);
-        Files.createDirectories(contentFilePath.getParent());
-        Files.writeString(contentFilePath, content);
-        item.setContentPath(contentFilePath.toString().replace("\\", "/"));
-        log.info("Downloaded article for {} to {}", item.getTitle(), item.getContentPath());
+        return content;
     }
 
     private String extractSlug(String url) {

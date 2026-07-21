@@ -17,13 +17,13 @@ import java.util.List;
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-public class FetchResult {
+public class CrawlResult {
 
     /**
      * 抓取坐标（period + date + source + category + language）。
      */
     @JsonUnwrapped
-    private FetchCoordinate coordinate;
+    private CrawlCoordinate coordinate;
 
     /**
      * 热门项列表

@@ -1,7 +1,8 @@
 package com.waic.springaidemo.pipeline.controller;
 
 import com.waic.springaidemo.ai.service.ReportGenerator;
-import com.waic.springaidemo.common.entity.FetchResult;
+import com.waic.springaidemo.common.entity.CrawlCoordinate;
+import com.waic.springaidemo.common.entity.CrawlResult;
 import com.waic.springaidemo.common.entity.ReportResult;
 import com.waic.springaidemo.common.enums.DataSourceEnum;
 import com.waic.springaidemo.common.enums.PeriodEnum;
@@ -12,7 +13,6 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -39,41 +39,29 @@ public class PipelineController {
     private String ollamaModel;
 
     /**
-     * 手动触发抓取
+     * 手动触发抓取：全量或指定数据源。
+     * <p>period 必填；source 可选，缺省表示全量（所有数据源）；date 可选，默认今天。
+     * 例：/api/pipeline/crawl?period=daily&source=github&date=2026-07-21</p>
      *
-     * @param period 周期，可选 daily/weekly/monthly
-     * @param date   日期，默认今天
-     * @return 抓取结果
+     * @param period 周期，必填 daily/weekly/monthly
+     * @param source 数据源，可选 github/gitee/juejin；缺省表示全量
+     * @param date   日期，可选，默认今天
+     * @return 抓取结果列表
      * @throws IOException IO 异常
      */
-    @PostMapping("/pipeline/crawl/{period}")
-    public List<FetchResult> crawl(@PathVariable String period,
+    @PostMapping("/pipeline/crawl")
+    public List<CrawlResult> crawl(@RequestParam String period,
+                                   @RequestParam(required = false) String source,
                                    @RequestParam(required = false)
                                    @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) throws IOException {
         if (date == null) {
             date = LocalDate.now();
         }
-        return pipelineService.runCrawl(date, PeriodEnum.of(period));
-    }
-
-    /**
-     * 手动触发指定数据源的抓取
-     *
-     * @param source 数据源（github/gitee/juejin）
-     * @param period 周期，必填 daily/weekly/monthly
-     * @param date   日期，默认今天
-     * @return 抓取结果
-     * @throws IOException IO 异常
-     */
-    @PostMapping("/pipeline/crawl/source/{source}")
-    public List<FetchResult> crawlBySource(@PathVariable String source,
-                                           @RequestParam String period,
-                                           @RequestParam(required = false)
-                                           @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) throws IOException {
-        if (date == null) {
-            date = LocalDate.now();
-        }
-        return pipelineService.runCrawlBySource(DataSourceEnum.of(source), date, PeriodEnum.of(period));
+        DataSourceEnum resolvedSource = org.springframework.util.StringUtils.hasText(source)
+                ? DataSourceEnum.of(source)
+                : null;
+        CrawlCoordinate coordinate = new CrawlCoordinate(resolvedSource, PeriodEnum.of(period), date, null, null);
+        return pipelineService.runCrawl(coordinate);
     }
 
     /**

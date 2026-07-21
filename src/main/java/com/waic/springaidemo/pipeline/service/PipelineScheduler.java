@@ -1,5 +1,6 @@
 package com.waic.springaidemo.pipeline.service;
 
+import com.waic.springaidemo.common.entity.CrawlCoordinate;
 import com.waic.springaidemo.common.enums.PeriodEnum;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -50,7 +51,7 @@ public class PipelineScheduler {
 
     private void runCrawl(LocalDate date, PeriodEnum period) {
         try {
-            pipelineService.runCrawl(date, period);
+            pipelineService.runCrawl(new CrawlCoordinate(null, period, date, null, null));
         } catch (IOException e) {
             log.error("Scheduled crawl failed, date={}, period={}", date, period, e);
         }

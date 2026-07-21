@@ -7,7 +7,7 @@ import java.io.IOException;
 
 /**
  * 聚合树（summary.json）持久化。
- * 与原始抓取结果解耦，见 {@link FetchResultRepository}。
+ * 与原始抓取结果解耦，见 {@link CrawlRepository}。
  */
 public interface SummaryRepository {
 

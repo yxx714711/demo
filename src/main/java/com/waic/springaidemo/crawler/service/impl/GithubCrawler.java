@@ -1,15 +1,15 @@
 package com.waic.springaidemo.crawler.service.impl;
 
 import com.waic.springaidemo.crawler.config.CrawlerProperties;
-import com.waic.springaidemo.common.entity.FetchCoordinate;
-import com.waic.springaidemo.common.entity.FetchResult;
+import com.waic.springaidemo.common.entity.CrawlCoordinate;
+import com.waic.springaidemo.common.entity.CrawlResult;
 import com.waic.springaidemo.common.entity.HotItem;
 import com.waic.springaidemo.common.enums.DataSourceEnum;
 import com.waic.springaidemo.common.enums.PeriodEnum;
-import com.waic.springaidemo.common.utils.FilePathUtils;
+import com.waic.springaidemo.common.exception.ContentNotFoundException;
 import com.waic.springaidemo.crawler.service.Crawler;
 import com.waic.springaidemo.crawler.utils.HttpUtil;
-import com.waic.springaidemo.crawler.utils.PageFetcherUtil;
+import com.waic.springaidemo.crawler.utils.PageCrawlUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.jsoup.nodes.Document;
@@ -20,8 +20,6 @@ import org.springframework.util.CollectionUtils;
 
 import java.io.IOException;
 import java.net.http.HttpResponse;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -38,7 +36,7 @@ public class GithubCrawler implements Crawler {
     private static final List<String> SUPPORTED_README_BRANCHES = List.of("main", "master");
 
     private final CrawlerProperties crawlerProperties;
-    private final PageFetcherUtil pageFetcherUtil;
+    private final PageCrawlUtil pageCrawlUtil;
     private final HttpUtil httpUtil;
 
     @Override
@@ -63,13 +61,13 @@ public class GithubCrawler implements Crawler {
     }
 
     @Override
-    public FetchResult crawl(FetchCoordinate coordinate) {
+    public CrawlResult crawl(CrawlCoordinate coordinate) {
         String periodParam = getPeriod(coordinate.period());
         String langParam = "all".equals(coordinate.language()) ? "" : coordinate.language();
         String url = String.format(crawlerProperties.getGithub().getHotBaseUrl(), langParam, periodParam);
         log.info("正在抓取 GitHub 热门仓库: {}", url);
 
-        Document document = pageFetcherUtil.fetchDocument(url, "article.Box-row",
+        Document document = pageCrawlUtil.crawlDocument(url, "article.Box-row",
                 doc -> !doc.select("article.Box-row").isEmpty());
         Elements rows = document.select("article.Box-row");
         if (rows.isEmpty()) {
@@ -91,7 +89,7 @@ public class GithubCrawler implements Crawler {
             count++;
         }
 
-        return FetchResult.builder()
+        return CrawlResult.builder()
                 .coordinate(coordinate)
                 .items(items)
                 .build();
@@ -120,6 +118,7 @@ public class GithubCrawler implements Crawler {
                 .title(title)
                 .url(fullUrl)
                 .description(description)
+                .contentPath(HotItem.CONTENT_PENDING)
                 .build();
     }
 
@@ -141,31 +140,34 @@ public class GithubCrawler implements Crawler {
     }
 
     @Override
-    public void download(HotItem item, FetchCoordinate coordinate) throws IOException {
+    public String fetchContent(HotItem item) throws IOException, ContentNotFoundException {
         String repoPath = item.getUrl().replace("https://github.com/", "");
         String[] parts = repoPath.split("/");
         if (parts.length < 2) {
-            throw new IOException("Invalid repo path: " + item.getUrl());
+            throw new ContentNotFoundException("Invalid repo path: " + item.getUrl());
         }
         String owner = parts[0];
         String repo = parts[1];
 
+        ContentNotFoundException notFound = null;
         for (String branch : SUPPORTED_README_BRANCHES) {
             String rawUrl = String.format(crawlerProperties.getGithub().getContentBaseUrl(), owner, repo, branch);
             HttpResponse<String> response = httpUtil.getFollow(rawUrl, null);
-            if (response.statusCode() == 200) {
-                String content = response.body();
-                String slug = owner + "_" + repo;
-                Path contentFilePath = FilePathUtils.getContentFilePath(coordinate.source(), coordinate.period(),
-                        coordinate.date(), coordinate.category(), coordinate.language(), slug);
-                Files.createDirectories(contentFilePath.getParent());
-                Files.writeString(contentFilePath, content);
-                item.setContentPath(contentFilePath.toString().replace("\\", "/"));
-                log.info("已下载 README：{}，保存至 {}", item.getTitle(), item.getContentPath());
-                return;
+            int status = response.statusCode();
+            if (status == 200) {
+                return response.body();
             }
+            if (status == 404) {
+                // 该分支无 README，尝试下一分支（跨分支容忍）
+                notFound = new ContentNotFoundException(
+                        "README not found (404) for " + item.getTitle() + " branch=" + branch);
+                continue;
+            }
+            // 其余非 200（瞬时/服务端错误）→ 直接抛 IOException 保持 PENDING 重试
+            throw new IOException("Failed to fetch README for " + item.getTitle()
+                    + " branch=" + branch + " status=" + status);
         }
-        throw new IOException("Failed to download README for " + item.getTitle()
-                + " (all branches failed): " + item.getUrl());
+        throw notFound != null ? notFound
+                : new ContentNotFoundException("Failed to download README for " + item.getTitle());
     }
 }

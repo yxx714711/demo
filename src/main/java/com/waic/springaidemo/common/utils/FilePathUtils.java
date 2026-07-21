@@ -16,8 +16,8 @@ import java.util.List;
  */
 public final class FilePathUtils {
 
+    public static final String HOTITEMS_FILE = "hotitems.json";
     private static final String DATA_DIR = "data";
-    private static final String HOTITEMS_FILE = "hotitems.json";
     private static final String SUMMARIES_DIR = "summaries";
     private static final String SUMMARY_FILE = "summary.json";
 
@@ -94,7 +94,7 @@ public final class FilePathUtils {
      * 保证 SummaryKey 与路径一致、缓存可命中（itemId 可能含 / : # 等非法字符）。
      * 调用方已确保 itemId 非空，故此处只做字符清洗。
      */
-    private static String sanitizeItemId(String itemId) {
+    public static String sanitizeItemId(String itemId) {
         StringBuilder sb = new StringBuilder();
         for (int i = 0; i < itemId.length(); i++) {
             char c = itemId.charAt(i);
