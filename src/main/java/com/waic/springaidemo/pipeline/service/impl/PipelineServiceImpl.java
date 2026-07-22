@@ -11,7 +11,7 @@ import com.waic.springaidemo.common.entity.SummaryKey;
 import com.waic.springaidemo.common.enums.DataSourceEnum;
 import com.waic.springaidemo.common.enums.LevelEnum;
 import com.waic.springaidemo.common.enums.PeriodEnum;
-import com.waic.springaidemo.common.utils.TextSplitter;
+import com.waic.springaidemo.pipeline.utils.TextSplitterUtil;
 import com.waic.springaidemo.common.exception.ContentNotFoundException;
 import com.waic.springaidemo.crawler.service.Crawler;
 import com.waic.springaidemo.crawler.service.CrawlerRegistry;
@@ -29,12 +29,7 @@ import org.springframework.util.StringUtils;
 import java.io.IOException;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Predicate;
@@ -71,30 +66,36 @@ public class PipelineServiceImpl implements PipelineService {
     private final Map<PeriodEnum, TaskState> taskStates = new ConcurrentHashMap<>();
 
     @Override
-    public List<CrawlResult> runCrawl(CrawlCoordinate coordinate) throws IOException {
+    public List<CrawlResult> runCrawl(CrawlCoordinate coordinate, boolean force) throws IOException {
         DataSourceEnum source = coordinate.source();
         PeriodEnum period = coordinate.period();
         LocalDate date = coordinate.date();
-        log.info("Running crawl pipeline for source={}, date={}, period={}", source, date, period);
+        log.info("Running crawl pipeline for source={}, date={}, period={}, force={}", source, date, period, force);
 
         // source 为 null 表示全量（所有数据源）；否则仅匹配指定源。
-        // category/language 维度本方法忽略，由 crawler 内部 buildFetchCoordinates 决定。
+        // category/language 维度本方法忽略，由 crawler 内部 buildCoordinates 决定。
         // 统一行为：无匹配抓取器时静默返回空列表（noMatchMessage=null）。
         Predicate<Crawler> crawlerFilter = source == null
                 ? crawler -> true
                 : crawler -> crawler.supports(coordinate);
-        List<CrawlResult> results = doCrawl(date, period, crawlerFilter);
-        return persistAndDownload(results);
+        List<CrawlResult> results = doCrawl(date, period, crawlerFilter, force);
+        return doDownload(results);
     }
 
     /**
-     * 抓取编排：对通过 crawlerFilter 的抓取器，遍历其 buildContexts 产出的请求并执行抓取。
-     * buildContexts 已保证只返回受支持的请求，故此处不再逐个做 supports 过滤。
-     * 单个请求抓取失败时跳过并继续，不影响其他请求。
-     * 若没有任何抓取器通过过滤且 noMatchMessage 非 null，抛出 IllegalStateException。
+     * 抓取编排（含 coordinate 级去重 + 即时落盘）：对通过 crawlerFilter 的抓取器，
+     * 遍历其 buildCoordinates 产出的坐标并逐个处理：
+     * <ul>
+     *   <li>{@code force=false} 且对应 hotitems.json 已存在 → 跳过抓取，直接读回该 CrawlResult
+     *       （其 item 携带磁盘上最新 contentPath 状态）；</li>
+     *   <li>否则执行 {@code crawler.crawl()}，将 item 的 contentPath 初始化为 PENDING 后
+     *       <b>立即落盘</b>（saveItems），再收集进结果。</li>
+     * </ul>
+     * 单个坐标抓取失败时跳过并继续，不影响其他坐标。
+     * 若没有任何抓取器通过过滤，抛出 IllegalStateException。
      */
     private List<CrawlResult> doCrawl(LocalDate date, PeriodEnum period,
-                                      Predicate<Crawler> crawlerFilter) {
+                                      Predicate<Crawler> crawlerFilter, boolean force) {
         List<CrawlResult> results = new ArrayList<>();
         boolean anyMatched = false;
         for (Crawler crawler : crawlerRegistry.getAllCrawlers()) {
@@ -102,12 +103,20 @@ public class PipelineServiceImpl implements PipelineService {
                 continue;
             }
             anyMatched = true;
-            for (CrawlCoordinate coordinate : crawler.buildFetchCoordinates(date, period)) {
+            for (CrawlCoordinate coordinate : crawler.buildCoordinates(date, period)) {
+                // 防重复：非强刷且文件已存在，直接读回磁盘上的结果（含最新 contentPath）
+                if (!force) {
+                    Optional<CrawlResult> existing = crawlRepository.loadItem(coordinate);
+                    if (existing.isPresent()) {
+                        log.info("Skip crawl (hotitems.json exists) coordinate={}", coordinate);
+                        results.add(existing.get());
+                        continue;
+                    }
+                }
                 try {
-                    CrawlResult fr = crawler.crawl(coordinate);
-                    // crawl 阶段统一将所有 item 标为待下载；复用逻辑在 persistAndDownload 中按已有路径覆盖
-                    fr.getItems().forEach(i -> i.setContentPath(HotItem.CONTENT_PENDING));
-                    results.add(fr);
+                    CrawlResult result = crawler.crawl(coordinate);
+                    crawlRepository.saveItems(result);
+                    results.add(result);
                 } catch (Exception e) {
                     log.warn("Crawl failed for {} coordinate={}, skipping",
                             crawler.getClass().getSimpleName(), coordinate, e);
@@ -121,45 +130,15 @@ public class PipelineServiceImpl implements PipelineService {
     }
 
     /**
-     * 持久化抓取结果并逐条下载正文（Step 2 + Step 3），支持断点续跑：
-     * 已落盘且 contentPath 非 PENDING 的 item 直接复用旧路径（不重复下载），
-     * 仅对 contentPath 为 "PENDING" 的 item 发起下载；单条失败保持 PENDING 供续跑。
+     * 逐条下载正文（Step 3），纯 PENDING 驱动、支持断点续跑：
+     * 仅对 contentPath 为 "PENDING" 的 item 发起下载，其余（真实路径 / 404）跳过；
+     * 单条 IOException 保持 PENDING 供续跑，ContentNotFoundException 标记 404 不重试。
+     * 每个 CrawlResult 处理完统一 updateItems 写回磁盘。
      */
-    private List<CrawlResult> persistAndDownload(List<CrawlResult> results) throws IOException {
+    private List<CrawlResult> doDownload(List<CrawlResult> results) throws IOException {
         if (CollectionUtils.isEmpty(results)) {
             return results;
         }
-
-        CrawlCoordinate firstCoordinate = results.get(0).getCoordinate();
-        LocalDate date = firstCoordinate.date();
-        PeriodEnum period = firstCoordinate.period();
-
-        // 预载已有「已下载」contentPath：key = source|category|language|itemId
-        Map<String, String> existingPaths = new HashMap<>();
-        Set<DataSourceEnum> sources = new java.util.LinkedHashSet<>();
-        for (CrawlResult fr : results) {
-            sources.add(fr.getCoordinate().source());
-        }
-        for (DataSourceEnum src : sources) {
-            List<CrawlResult> existing = crawlRepository.loadItems(new CrawlCoordinate(src, period, date, null, null));
-            for (CrawlResult ex : existing) {
-                for (HotItem it : ex.getItems()) {
-                    if (it.getContentPath() != null && !HotItem.CONTENT_PENDING.equals(it.getContentPath())) {
-                        existingPaths.put(contentKey(ex, it), it.getContentPath());
-                    }
-                }
-            }
-        }
-
-        for (CrawlResult result : results) {
-            for (HotItem item : result.getItems()) {
-                String reused = existingPaths.get(contentKey(result, item));
-                item.setContentPath(reused != null ? reused : HotItem.CONTENT_PENDING);
-            }
-            crawlRepository.saveItems(result);
-        }
-        log.info("Saved {} fetch results (reusing existing content where available)", results.size());
-
         for (CrawlResult result : results) {
             Crawler crawler = crawlerRegistry.resolve(result.getCoordinate()).orElse(null);
             if (crawler == null) {
@@ -173,7 +152,7 @@ public class PipelineServiceImpl implements PipelineService {
                     continue; // 已下载或已标记 404，跳过
                 }
                 try {
-                    String text = crawler.fetchContent(item);
+                    String text = crawler.crawlContent(item);
                     crawlRepository.saveContent(result.getCoordinate(), item, text);
                 } catch (ContentNotFoundException e) {
                     item.setContentPath(HotItem.CONTENT_NOT_FOUND);
@@ -186,14 +165,6 @@ public class PipelineServiceImpl implements PipelineService {
             crawlRepository.updateItems(result);
         }
         return results;
-    }
-
-    /**
-     * 断点续跑用的 item 定位键（同 source/category/language 下按 itemId 区分）。
-     */
-    private static String contentKey(CrawlResult fr, HotItem item) {
-        CrawlCoordinate coordinate = fr.getCoordinate();
-        return coordinate.source() + "|" + coordinate.normalizedCategory() + "|" + coordinate.normalizedLanguage() + "|" + item.getId();
     }
 
     // ===== 递归聚合编排（D1/D7/D8） =====
@@ -285,7 +256,7 @@ public class PipelineServiceImpl implements PipelineService {
     }
 
     /**
-     * 逐篇（ITEM）节点：正文先按 {@link TextSplitter} 切成 CHUNK（单块 ≤ CHUNK_MAX_INPUT_CHARS），
+     * 逐篇（ITEM）节点：正文先按 {@link TextSplitterUtil} 切成 CHUNK（单块 ≤ CHUNK_MAX_INPUT_CHARS），
      * 每个 CHUNK 单独喂 AI 生成块摘要（CHUNK 叶子）；再把它所有 CHUNK 摘要聚合为这一篇的最终摘要。
      * 单 CHUNK 时直接复用品块摘要、跳过合并；多 CHUNK 才调 summarizeNode 合并。
      * 正文为空（PENDING/下载失败）时用「标题 + 元数据摘要」拼伪正文再切片（A+C）；
@@ -324,7 +295,7 @@ public class PipelineServiceImpl implements PipelineService {
         if (inputText == null) {
             summary = "(无正文，跳过 AI)"; // A：兜底，不建 CHUNK
         } else {
-            List<String> chunks = TextSplitter.split(inputText, CHUNK_MAX_INPUT_CHARS, CHUNK_OVERLAP_RATIO);
+            List<String> chunks = TextSplitterUtil.split(inputText, CHUNK_MAX_INPUT_CHARS, CHUNK_OVERLAP_RATIO);
             if (chunks.size() == 1) {
                 // 单 CHUNK：直接复用品块摘要，跳过一次合并 AI 调用
                 NodeSummary chunkNode = summarizeChunk(
@@ -510,7 +481,7 @@ public class PipelineServiceImpl implements PipelineService {
     private void runPipeline(PeriodEnum period, LocalDate date) {
         try {
             log.info("[pipeline] start period={} date={}", period, date);
-            persistAndDownload(doCrawl(date, period, crawler -> true));
+            doDownload(doCrawl(date, period, crawler -> true, false));
             ReportResult report = generateReport(period, date, false);
             updateState(period, TaskStatus.SUCCESS, null);
             log.info("[pipeline] done period={} date={} sourceCount={} categoryCount={} path={}",

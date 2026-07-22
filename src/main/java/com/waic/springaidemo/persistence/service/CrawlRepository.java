@@ -8,6 +8,7 @@ import com.waic.springaidemo.common.enums.PeriodEnum;
 import java.io.IOException;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * 原始抓取结果持久化（hotitems.json + markdown 正文）。
@@ -25,6 +26,16 @@ public interface CrawlRepository {
      * 批量更新已持久化 FetchResult 中 HotItem 的 contentPath
      */
     void updateItems(CrawlResult result) throws IOException;
+
+    /**
+     * 读取单个坐标对应的 hotitems.json（精确到 source/period/date/category/language 的那一个文件）。
+     * <p>与 {@link #loadItems(CrawlCoordinate)} 不同：本方法不做跨维度 glob，只定位并读取唯一文件。
+     * 文件不存在或解析失败时返回 {@link Optional#empty()}，供调用方判定为「需重新抓取」。</p>
+     *
+     * @param coordinate 抓取坐标（source/period/date/category/language 均参与路径定位）
+     * @return 该文件对应的 CrawlResult；文件缺失或损坏时返回 empty
+     */
+    Optional<CrawlResult> loadItem(CrawlCoordinate coordinate);
 
     /**
      * 读取指定坐标下的抓取结果。category/language 为 null 时跨该维度 glob；source 必填。

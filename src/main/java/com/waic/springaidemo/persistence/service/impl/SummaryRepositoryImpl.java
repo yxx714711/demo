@@ -4,7 +4,7 @@ import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.ObjectMapper;
 import com.waic.springaidemo.common.entity.NodeSummary;
 import com.waic.springaidemo.common.entity.SummaryKey;
-import com.waic.springaidemo.common.utils.FilePathUtils;
+import com.waic.springaidemo.persistence.utils.FilePathUtil;
 import com.waic.springaidemo.persistence.service.SummaryRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -27,13 +27,13 @@ public class SummaryRepositoryImpl implements SummaryRepository {
     private final ObjectMapper objectMapper;
 
     @Override
-    public boolean existsSummary(SummaryKey key) throws IOException {
-        return Files.exists(FilePathUtils.getSummaryPath(key));
+    public boolean existsSummary(SummaryKey key) {
+        return Files.exists(FilePathUtil.getSummaryPath(key));
     }
 
     @Override
     public NodeSummary loadSummary(SummaryKey key) throws IOException {
-        Path filePath = FilePathUtils.getSummaryPath(key);
+        Path filePath = FilePathUtil.getSummaryPath(key);
         if (!Files.exists(filePath)) {
             return null;
         }
@@ -43,7 +43,7 @@ public class SummaryRepositoryImpl implements SummaryRepository {
 
     @Override
     public void saveSummary(SummaryKey key, NodeSummary summary) throws IOException {
-        Path filePath = FilePathUtils.getSummaryPath(key);
+        Path filePath = FilePathUtil.getSummaryPath(key);
         Files.createDirectories(filePath.getParent());
         summary.setPath(filePath.toString().replace("\\", "/"));
         String json = objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(summary);
@@ -69,7 +69,7 @@ public class SummaryRepositoryImpl implements SummaryRepository {
             throw new IllegalStateException("source summary not found: " + src);
         }
         node.setLevel(dst.level());
-        node.setPath(FilePathUtils.getSummaryPath(dst).toString().replace("\\", "/"));
+        node.setPath(FilePathUtil.getSummaryPath(dst).toString().replace("\\", "/"));
         saveSummary(dst, node);
         log.info("Copied summary {} -> {}", src, dst);
     }

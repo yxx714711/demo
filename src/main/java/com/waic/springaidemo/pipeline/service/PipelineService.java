@@ -21,11 +21,15 @@ public interface PipelineService {
      * 非 null 表示仅抓取指定数据源；{@code period}/{@code date} 必填。{@code category}/{@code language}
      * 维度本方法忽略，由 crawler 内部 {@code buildFetchCoordinates} 决定。无匹配抓取器时静默返回空列表。</p>
      *
+     * <p>{@code force=false} 时按 coordinate 去重：对应 hotitems.json 已存在则跳过抓取、直接读回；
+     * {@code force=true} 时无视已有文件强制重新抓取并覆盖落盘。</p>
+     *
      * @param coordinate 抓取坐标（见上文语义）
+     * @param force      true=忽略已有文件强制重抓；false=文件存在则跳过（防重复）
      * @return 抓取结果列表
      * @throws IOException IO 异常
      */
-    List<CrawlResult> runCrawl(CrawlCoordinate coordinate) throws IOException;
+    List<CrawlResult> runCrawl(CrawlCoordinate coordinate, boolean force) throws IOException;
 
     /**
      * 递归聚合生成报告（后序遍历 data 树，逐节点调 LLM + 落盘），返回结构化结果。
@@ -37,13 +41,6 @@ public interface PipelineService {
      * @throws IOException IO 异常
      */
     ReportResult generateReport(PeriodEnum period, LocalDate date, boolean force) throws IOException;
-
-    /**
-     * 生成每日报告（便捷入口，force=false）
-     */
-    default ReportResult generateDailyReport(LocalDate date) throws IOException {
-        return generateReport(PeriodEnum.DAILY, date, false);
-    }
 
     /**
      * 触发组合任务（抓取→汇总），异步执行。立即返回触发结果，不阻塞等待。

@@ -15,17 +15,8 @@ public interface ReportGenerator {
     String summarizeItem(SummaryContext ctx, String input);
 
     /**
-     * 叶子（language 层）总结：input 为该目录下所有 markdown 正文拼接文本
-     */
-    String summarizeLeaf(SummaryContext ctx, String input);
-
-    /**
      * 聚合层（category/source/date）总结：input 为子节点 summary 拼接文本
      */
     String summarizeNode(SummaryContext ctx, String input);
 
-    /**
-     * 连通性测试：用流式方式发一句 prompt，返回模型回复文本（不落盘、不调度 pipeline）
-     */
-    String ping(String prompt);
 }

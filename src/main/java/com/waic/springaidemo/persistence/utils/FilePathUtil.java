@@ -1,4 +1,4 @@
-package com.waic.springaidemo.common.utils;
+package com.waic.springaidemo.persistence.utils;
 
 import com.waic.springaidemo.common.entity.SummaryKey;
 import com.waic.springaidemo.common.enums.DataSourceEnum;
@@ -14,14 +14,14 @@ import java.util.List;
 /**
  * 文件路径工具类
  */
-public final class FilePathUtils {
+public final class FilePathUtil {
 
     public static final String HOTITEMS_FILE = "hotitems.json";
     private static final String DATA_DIR = "data";
     private static final String SUMMARIES_DIR = "summaries";
     private static final String SUMMARY_FILE = "summary.json";
 
-    private FilePathUtils() {
+    private FilePathUtil() {
     }
 
     /**
@@ -111,15 +111,6 @@ public final class FilePathUtils {
      * 规整 chunkId 为合法路径段（chunk 索引由本服务生成，形如 c0/c1…，仅做基本清洗）。
      */
     private static String sanitizeChunkId(String chunkId) {
-        StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < chunkId.length(); i++) {
-            char c = chunkId.charAt(i);
-            if (Character.isLetterOrDigit(c) || c == '-' || c == '_' || c == '.') {
-                sb.append(c);
-            } else {
-                sb.append('_');
-            }
-        }
-        return sb.toString();
+        return sanitizeItemId(chunkId);
     }
 }

@@ -18,7 +18,6 @@ import org.jsoup.select.Elements;
 import org.springframework.stereotype.Component;
 import org.springframework.util.CollectionUtils;
 
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -120,7 +119,7 @@ public class JuejinCrawler implements Crawler {
     }
 
     @Override
-    public String fetchContent(HotItem item) throws IOException, ContentNotFoundException {
+    public String crawlContent(HotItem item) throws ContentNotFoundException {
         // 详情页同样走 Playwright，并等待正文容器 #article-root 渲染完成。
         Document document = pageCrawlUtil.crawlDocument(item.getUrl(), "#article-root", null);
         Element articleElement = document.selectFirst("#article-root");

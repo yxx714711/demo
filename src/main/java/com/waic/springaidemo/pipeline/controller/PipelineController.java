@@ -2,7 +2,6 @@ package com.waic.springaidemo.pipeline.controller;
 
 import com.waic.springaidemo.common.entity.CrawlCoordinate;
 import com.waic.springaidemo.common.entity.CrawlResult;
-import com.waic.springaidemo.common.entity.ReportResult;
 import com.waic.springaidemo.common.enums.DataSourceEnum;
 import com.waic.springaidemo.common.enums.PeriodEnum;
 import com.waic.springaidemo.pipeline.service.PipelineService;
@@ -40,19 +39,21 @@ public class PipelineController {
      * @param period 周期，必填 daily/weekly/monthly
      * @param source 数据源，可选 github/gitee/juejin；缺省表示全量
      * @param date   日期，可选，默认今天
+     * @param force  是否强制重抓，可选，默认 false；true 时无视已有 hotitems.json 覆盖重抓
      * @return 抓取结果列表
      * @throws IOException IO 异常
      */
     @PostMapping("/pipeline/crawl")
     public List<CrawlResult> crawl(@RequestParam String period,
                                    @RequestParam(required = false) String source,
-                                   @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) throws IOException {
+                                   @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date,
+                                   @RequestParam(required = false, defaultValue = "false") boolean force) throws IOException {
         if (date == null) {
             date = LocalDate.now();
         }
         DataSourceEnum resolvedSource = DataSourceEnum.ofNullable(source);
         CrawlCoordinate coordinate = new CrawlCoordinate(resolvedSource, PeriodEnum.of(period), date, null, null);
-        return pipelineService.runCrawl(coordinate);
+        return pipelineService.runCrawl(coordinate, force);
     }
 
     /**
@@ -70,38 +71,5 @@ public class PipelineController {
             return ResponseEntity.status(HttpStatus.CONFLICT).build();
         }
         return ResponseEntity.status(HttpStatus.ACCEPTED).build();
-    }
-
-    /**
-     * 手动触发每日报告生成
-     *
-     * @param date 日期，默认今天
-     * @return 报告结果（结构化）
-     * @throws IOException IO 异常
-     */
-    @PostMapping("/report/daily")
-    public ReportResult generateDailyReport(@RequestParam(required = false)
-                                        @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) throws IOException {
-        if (date == null) {
-            date = LocalDate.now();
-        }
-        long start = System.currentTimeMillis();
-        log.info("Daily report start date={}", date);
-        try {
-            ReportResult result = pipelineService.generateReport(PeriodEnum.DAILY, date);
-            long elapsed = System.currentTimeMillis() - start;
-            log.info("Daily report success date={} elapsedMs={} sourceCount={} categoryCount={} path={} summaryLen={}",
-                    date, elapsed, result.getSourceCount(), result.getCategoryCount(),
-                    result.getPath(), safeLen(result.getSummary()));
-            return result;
-        } catch (Exception e) {
-            long elapsed = System.currentTimeMillis() - start;
-            log.error("Daily report failed date={} elapsedMs={}", date, elapsed, e);
-            throw e;
-        }
-    }
-
-    private static int safeLen(String s) {
-        return s == null ? 0 : s.length();
     }
 }

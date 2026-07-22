@@ -7,7 +7,7 @@ import com.waic.springaidemo.common.entity.CrawlResult;
 import com.waic.springaidemo.common.entity.HotItem;
 import com.waic.springaidemo.common.enums.DataSourceEnum;
 import com.waic.springaidemo.common.enums.PeriodEnum;
-import com.waic.springaidemo.common.utils.FilePathUtils;
+import com.waic.springaidemo.persistence.utils.FilePathUtil;
 import com.waic.springaidemo.persistence.service.CrawlRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -22,6 +22,7 @@ import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -39,7 +40,7 @@ public class CrawlRepositoryImpl implements CrawlRepository {
     @Override
     public void saveItems(CrawlResult result) throws IOException {
         CrawlCoordinate coordinate = result.getCoordinate();
-        Path filePath = FilePathUtils.getHotItemsFilePath(coordinate.source(), coordinate.period(),
+        Path filePath = FilePathUtil.getHotItemsFilePath(coordinate.source(), coordinate.period(),
                 coordinate.date(), coordinate.normalizedCategory(), coordinate.normalizedLanguage());
         Files.createDirectories(filePath.getParent());
         String json = objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(result);
@@ -50,7 +51,7 @@ public class CrawlRepositoryImpl implements CrawlRepository {
     @Override
     public void updateItems(CrawlResult result) throws IOException {
         CrawlCoordinate coordinate = result.getCoordinate();
-        Path filePath = FilePathUtils.getHotItemsFilePath(coordinate.source(), coordinate.period(),
+        Path filePath = FilePathUtil.getHotItemsFilePath(coordinate.source(), coordinate.period(),
                 coordinate.date(), coordinate.normalizedCategory(), coordinate.normalizedLanguage());
         if (!Files.exists(filePath)) {
             log.warn("Fetch result file not found: {}", filePath);
@@ -74,8 +75,26 @@ public class CrawlRepositoryImpl implements CrawlRepository {
     }
 
     @Override
+    public Optional<CrawlResult> loadItem(CrawlCoordinate coordinate) {
+        Path filePath = FilePathUtil.getHotItemsFilePath(coordinate.source(), coordinate.period(),
+                coordinate.date(), coordinate.normalizedCategory(), coordinate.normalizedLanguage());
+        if (!Files.exists(filePath)) {
+            return Optional.empty();
+        }
+        try {
+            CrawlResult result = objectMapper.readValue(
+                    Files.readString(filePath, StandardCharsets.UTF_8),
+                    new TypeReference<>() {});
+            return Optional.ofNullable(result);
+        } catch (IOException e) {
+            log.warn("Failed to load hotitems from {}, treat as absent", filePath, e);
+            return Optional.empty();
+        }
+    }
+
+    @Override
     public List<CrawlResult> loadItems(CrawlCoordinate coordinate) throws IOException {
-        Path baseDir = FilePathUtils.getHotItemsDir(coordinate.source(), coordinate.period(),
+        Path baseDir = FilePathUtil.getHotItemsDir(coordinate.source(), coordinate.period(),
                 coordinate.date(), null, null);
         return walkHotItems(baseDir);
     }
@@ -96,7 +115,7 @@ public class CrawlRepositoryImpl implements CrawlRepository {
         }
         try (Stream<Path> walk = Files.walk(baseDir)) {
             List<Path> files = walk.filter(Files::isRegularFile)
-                    .filter(path -> path.getFileName().toString().equals(FilePathUtils.HOTITEMS_FILE))
+                    .filter(path -> path.getFileName().toString().equals(FilePathUtil.HOTITEMS_FILE))
                     .toList();
             for (Path file : files) {
                 try {
@@ -117,8 +136,8 @@ public class CrawlRepositoryImpl implements CrawlRepository {
             item.setContentPath(HotItem.CONTENT_NOT_FOUND);
             return;
         }
-        String slug = FilePathUtils.sanitizeItemId(item.getId());
-        Path contentFilePath = FilePathUtils.getContentFilePath(coordinate.source(), coordinate.period(),
+        String slug = FilePathUtil.sanitizeItemId(item.getId());
+        Path contentFilePath = FilePathUtil.getContentFilePath(coordinate.source(), coordinate.period(),
                 coordinate.date(), coordinate.normalizedCategory(), coordinate.normalizedLanguage(), slug);
         Files.createDirectories(contentFilePath.getParent());
         Files.writeString(contentFilePath, text, StandardCharsets.UTF_8);

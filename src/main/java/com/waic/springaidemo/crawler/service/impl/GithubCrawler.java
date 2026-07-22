@@ -140,7 +140,7 @@ public class GithubCrawler implements Crawler {
     }
 
     @Override
-    public String fetchContent(HotItem item) throws IOException, ContentNotFoundException {
+    public String crawlContent(HotItem item) throws IOException, ContentNotFoundException {
         String repoPath = item.getUrl().replace("https://github.com/", "");
         String[] parts = repoPath.split("/");
         if (parts.length < 2) {

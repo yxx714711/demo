@@ -1,4 +1,4 @@
-package com.waic.springaidemo.common.utils;
+package com.waic.springaidemo.pipeline.utils;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -10,11 +10,11 @@ import java.util.List;
  * <p>落刀优先级：段落分隔（\n\n）> 单换行 > 句末标点（. 。 ! ? ！ ？）。
  * 仅当单句长度超过 maxChars 才退化为硬切（最大程度避免拆断整句）。</p>
  */
-public final class TextSplitter {
+public final class TextSplitterUtil {
 
     private static final String SENTENCE_ENDS = ".。!?！？";
 
-    private TextSplitter() {
+    private TextSplitterUtil() {
     }
 
     /**

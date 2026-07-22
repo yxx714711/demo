@@ -17,12 +17,12 @@ import java.util.stream.Stream;
  * 抓取器门面：同时具备列表抓取与正文下载能力。
  *
  * <p>本接口在维度模型（source + period + category + language）基础上，
- * 提供了 {@link #supports(CrawlCoordinate)} / {@link #buildFetchCoordinates(LocalDate, PeriodEnum)}
- * 的默认实现。子类只需实现 5 个取值器与 {@link #crawl(CrawlCoordinate)} / {@link #fetchContent(HotItem)}，
+ * 提供了 {@link #supports(CrawlCoordinate)} / {@link #buildCoordinates(LocalDate, PeriodEnum)}
+ * 的默认实现。子类只需实现 5 个取值器与 {@link #crawl(CrawlCoordinate)} / {@link #crawlContent(HotItem)}，
  * 无需重复维度展开逻辑。</p>
  *
  * <p>抓取与持久化解耦：{@link #crawl(CrawlCoordinate)} 产出列表元数据，
- * {@link #fetchContent(HotItem)} 仅返回正文<b>文本</b>（不含落盘），落盘与 contentPath 回填由持久化层负责。</p>
+ * {@link #crawlContent(HotItem)} 仅返回正文<b>文本</b>（不含落盘），落盘与 contentPath 回填由持久化层负责。</p>
  */
 public interface Crawler {
 
@@ -52,7 +52,7 @@ public interface Crawler {
      * @param period 周期
      * @return 坐标列表
      */
-    default List<CrawlCoordinate> buildFetchCoordinates(LocalDate date, PeriodEnum period) {
+    default List<CrawlCoordinate> buildCoordinates(LocalDate date, PeriodEnum period) {
         if (!getPeriods().contains(period)) {
             return List.of();
         }
@@ -63,7 +63,7 @@ public interface Crawler {
                 .flatMap(category ->
                         // 每次都基于集合重新生成 Stream，避免重复消费
                         (languages.isEmpty() ? Stream.of((String) null) : languages.stream())
-                                .map(language -> buildCoordinate(date, period, category, language))
+                                .map(language -> new CrawlCoordinate(getDataSource(), period, date, category, language))
                 )
                 .toList();
     }
@@ -114,7 +114,7 @@ public interface Crawler {
      * @throws IOException               瞬时错误（超时、连接抖动等），调用方应保持 PENDING 重试
      * @throws ContentNotFoundException   正文不存在（404 / 节点缺失 / 空正文），调用方标记 404 不重试
      */
-    String fetchContent(HotItem item) throws IOException, ContentNotFoundException;
+    String crawlContent(HotItem item) throws IOException, ContentNotFoundException;
 
     /**
      * 判断单个维度值是否合法：
@@ -133,9 +133,5 @@ public interface Crawler {
             return false;
         }
         return allowed.contains(value);
-    }
-
-    private CrawlCoordinate buildCoordinate(LocalDate date, PeriodEnum period, String category, String language) {
-        return new CrawlCoordinate(getDataSource(), period, date, category, language);
     }
 }
