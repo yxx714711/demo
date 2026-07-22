@@ -3,7 +3,7 @@ package com.waic.springaidemo.persistence.service.impl;
 import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.ObjectMapper;
 import com.waic.springaidemo.common.entity.NodeSummary;
-import com.waic.springaidemo.common.entity.SummaryKey;
+import com.waic.springaidemo.common.entity.SummaryCoordinate;
 import com.waic.springaidemo.persistence.utils.FilePathUtil;
 import com.waic.springaidemo.persistence.service.SummaryRepository;
 import lombok.RequiredArgsConstructor;
@@ -27,12 +27,12 @@ public class SummaryRepositoryImpl implements SummaryRepository {
     private final ObjectMapper objectMapper;
 
     @Override
-    public boolean existsSummary(SummaryKey key) {
+    public boolean existsSummary(SummaryCoordinate key) {
         return Files.exists(FilePathUtil.getSummaryPath(key));
     }
 
     @Override
-    public NodeSummary loadSummary(SummaryKey key) throws IOException {
+    public NodeSummary loadSummary(SummaryCoordinate key) throws IOException {
         Path filePath = FilePathUtil.getSummaryPath(key);
         if (!Files.exists(filePath)) {
             return null;
@@ -42,10 +42,10 @@ public class SummaryRepositoryImpl implements SummaryRepository {
     }
 
     @Override
-    public void saveSummary(SummaryKey key, NodeSummary summary) throws IOException {
+    public void saveSummary(SummaryCoordinate key, NodeSummary summary) throws IOException {
         Path filePath = FilePathUtil.getSummaryPath(key);
         Files.createDirectories(filePath.getParent());
-        summary.setPath(filePath.toString().replace("\\", "/"));
+        // path 由 coordinate 派生（NodeSummary.path()），无需在节点内持久化
         String json = objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(summary);
         Path temp = Files.createTempFile(filePath.getParent(), ".summary-", ".tmp");
         try {
@@ -63,13 +63,13 @@ public class SummaryRepositoryImpl implements SummaryRepository {
     }
 
     @Override
-    public void copySummary(SummaryKey src, SummaryKey dst) throws IOException {
+    public void copySummary(SummaryCoordinate src, SummaryCoordinate dst) throws IOException {
         NodeSummary node = loadSummary(src);
         if (node == null) {
             throw new IllegalStateException("source summary not found: " + src);
         }
-        node.setLevel(dst.level());
-        node.setPath(FilePathUtil.getSummaryPath(dst).toString().replace("\\", "/"));
+        // level/path 由 coordinate 派生：直接把坐标换成目标层即可（D10 复制场景父/子仅层级不同）
+        node.setCoordinate(dst);
         saveSummary(dst, node);
         log.info("Copied summary {} -> {}", src, dst);
     }

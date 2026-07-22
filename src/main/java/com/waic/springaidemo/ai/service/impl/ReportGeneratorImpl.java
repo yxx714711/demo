@@ -1,12 +1,13 @@
 package com.waic.springaidemo.ai.service.impl;
 
+import com.waic.springaidemo.ai.components.PromptTemplateManager;
 import com.waic.springaidemo.ai.service.ReportGenerator;
-import com.waic.springaidemo.ai.entity.SummaryContext;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.client.ChatClient.PromptUserSpec;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.core.io.ClassPathResource;
+import org.springframework.core.io.Resource;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
@@ -16,31 +17,37 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 
 /**
- * 报告生成器实现：只调 LLM 生成节点总结文本，不落盘
+ * 报告生成器实现：纯 LLM 单段调用，不落盘、不感知层级与切片。
+ * 长度上限由 PromptTemplateManager 按模板映射得到，不从调用方传入。
  */
 @Slf4j
 @Service
 public class ReportGeneratorImpl implements ReportGenerator {
 
-    private static final ClassPathResource SYSTEM_PROMPT = new ClassPathResource("prompts/system-prompt.st");
-    private static final ClassPathResource ITEM_TEMPLATE = new ClassPathResource("prompts/item-summary.st");
-    private static final ClassPathResource NODE_TEMPLATE = new ClassPathResource("prompts/node-summary.st");
+    private static final Resource SYSTEM_PROMPT = new ClassPathResource("prompts/system-prompt.st");
 
     private final ChatClient chatClient;
+    private final PromptTemplateManager promptTemplateManager;
 
-    public ReportGeneratorImpl(ChatModel chatModel) {
+    public ReportGeneratorImpl(ChatModel chatModel, PromptTemplateManager promptTemplateManager) {
         this.chatClient = ChatClient.builder(chatModel)
                 .defaultSystem(SYSTEM_PROMPT)
                 .build();
+        this.promptTemplateManager = promptTemplateManager;
     }
 
-    private String callLlm(ClassPathResource template, SummaryContext ctx, String input) {
-        log.info("[stream-start] level={} maxChars={} inputLen={} template={}",
-                ctx.getLevel(), ctx.getMaxChars(), input.length(),
-                template.getFilename());
+    @Override
+    public String summarize(String input, Resource template) {
+        int maxChars = promptTemplateManager.maxChars(template);
+        return callLlm(template, maxChars, input);
+    }
+
+    private String callLlm(Resource template, int maxChars, String input) {
+        log.info("[stream-start] maxChars={} inputLen={} template={}",
+                maxChars, input.length(), template.getFilename());
         return streamAndAggregate(u -> u.text(template)
-                        .param("maxChars", ctx.getMaxChars())
-                        .param("input", input));
+                .param("maxChars", maxChars)
+                .param("input", input));
     }
 
     /**
@@ -69,15 +76,5 @@ public class ReportGeneratorImpl implements ReportGenerator {
         log.info("[stream-end] chunks={} chars={} firstTokenMs={}",
                 chunkCount.get(), sb.length(), firstTokenMs.get());
         return sb.toString();
-    }
-
-    @Override
-    public String summarizeItem(SummaryContext ctx, String input) {
-        return callLlm(ITEM_TEMPLATE, ctx, input);
-    }
-
-    @Override
-    public String summarizeNode(SummaryContext ctx, String input) {
-        return callLlm(NODE_TEMPLATE, ctx, input);
     }
 }

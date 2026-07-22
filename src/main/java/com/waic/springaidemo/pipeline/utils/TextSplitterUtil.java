@@ -9,6 +9,7 @@ import java.util.List;
  * 不依赖 LLM、无状态、可单测；切片结果确定（同样输入 → 同样的块序列）。
  * <p>落刀优先级：段落分隔（\n\n）> 单换行 > 句末标点（. 。 ! ? ！ ？）。
  * 仅当单句长度超过 maxChars 才退化为硬切（最大程度避免拆断整句）。</p>
+ * <p>切片编排归 pipeline（CHUNK 叶级策略），故本工具置于 pipeline.utils。</p>
  */
 public final class TextSplitterUtil {
 
@@ -36,7 +37,7 @@ public final class TextSplitterUtil {
         if (t.length() <= maxChars) {
             return List.of(t);
         }
-        int overlap = clamp((int) Math.round(maxChars * overlapRatio), 0, maxChars / 2);
+        int overlap = clamp((int) Math.round(maxChars * overlapRatio), maxChars / 2);
 
         List<String> chunks = new ArrayList<>();
         int start = 0;
@@ -110,7 +111,7 @@ public final class TextSplitterUtil {
         return SENTENCE_ENDS.indexOf(c) >= 0;
     }
 
-    private static int clamp(int v, int lo, int hi) {
-        return Math.min(hi, Math.max(lo, v));
+    private static int clamp(int v, int hi) {
+        return Math.min(hi, Math.max(0, v));
     }
 }

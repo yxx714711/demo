@@ -2,11 +2,11 @@ package com.waic.springaidemo.pipeline.service;
 
 import com.waic.springaidemo.common.entity.CrawlCoordinate;
 import com.waic.springaidemo.common.entity.CrawlResult;
-import com.waic.springaidemo.common.entity.ReportResult;
+import com.waic.springaidemo.common.entity.NodeSummary;
+import com.waic.springaidemo.common.entity.SummaryCoordinate;
 import com.waic.springaidemo.common.enums.PeriodEnum;
 
 import java.io.IOException;
-import java.time.LocalDate;
 import java.util.List;
 
 /**
@@ -33,14 +33,15 @@ public interface PipelineService {
 
     /**
      * 递归聚合生成报告（后序遍历 data 树，逐节点调 LLM + 落盘），返回结构化结果。
+     * <p>以 {@link SummaryCoordinate} 描述汇总请求：必为顶层（date 层）坐标，即 {@code SummaryCoordinate.top(period, date)}；
+     * source/category/language/itemId/chunkId 在顶层均为 null。无匹配数据时抛异常。</p>
      *
-     * @param period 周期（daily/weekly/monthly）
-     * @param date   日期
-     * @param force  true=忽略已有、全量重算
-     * @return 顶层 summaries 节点结果
+     * @param coordinate 顶层汇总坐标（见上文语义）
+     * @param force      true=忽略已有、全量重算
+     * @return 顶层 summaries 节点（含派生 path / summary，可直接取用或落盘续跑）
      * @throws IOException IO 异常
      */
-    ReportResult generateReport(PeriodEnum period, LocalDate date, boolean force) throws IOException;
+    NodeSummary runGenerate(SummaryCoordinate coordinate, boolean force) throws IOException;
 
     /**
      * 触发组合任务（抓取→汇总），异步执行。立即返回触发结果，不阻塞等待。

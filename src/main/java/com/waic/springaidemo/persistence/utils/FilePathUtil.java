@@ -1,6 +1,6 @@
 package com.waic.springaidemo.persistence.utils;
 
-import com.waic.springaidemo.common.entity.SummaryKey;
+import com.waic.springaidemo.common.entity.SummaryCoordinate;
 import com.waic.springaidemo.common.enums.DataSourceEnum;
 import com.waic.springaidemo.common.enums.PeriodEnum;
 import org.springframework.util.StringUtils;
@@ -65,25 +65,25 @@ public final class FilePathUtil {
      * 仅当对应维度非 null/空白时才追加该段，故 GitHub（无 category）路径不含 category 段、
      * 掘金（无 language）路径不含 language 段，未指定维度不会凭空生成 "_" 目录。
      */
-    public static Path getSummaryPath(SummaryKey key) {
+    public static Path getSummaryPath(SummaryCoordinate key) {
         List<String> parts = new ArrayList<>();
         parts.add(SUMMARIES_DIR);
-        parts.add(key.getPeriod().getCode());
-        parts.add(key.getDate().toString());
-        if (key.getSource() != null) {
-            parts.add(key.getSource().getCode());
+        parts.add(key.period().getCode());
+        parts.add(key.date().toString());
+        if (key.source() != null) {
+            parts.add(key.source().getCode());
         }
-        if (StringUtils.hasText(key.getCategory())) {
-            parts.add(key.getCategory());
+        if (StringUtils.hasText(key.category())) {
+            parts.add(key.category());
         }
-        if (StringUtils.hasText(key.getLanguage())) {
-            parts.add(key.getLanguage());
+        if (StringUtils.hasText(key.language())) {
+            parts.add(key.language());
         }
-        if (StringUtils.hasText(key.getItemId())) {
-            parts.add(sanitizeItemId(key.getItemId()));
+        if (StringUtils.hasText(key.itemId())) {
+            parts.add(sanitizeItemId(key.itemId()));
         }
-        if (StringUtils.hasText(key.getChunkId())) {
-            parts.add(sanitizeChunkId(key.getChunkId()));
+        if (StringUtils.hasText(key.chunkId())) {
+            parts.add(sanitizeChunkId(key.chunkId()));
         }
         return Paths.get(parts.get(0), parts.subList(1, parts.size()).toArray(new String[0]))
                 .resolve(SUMMARY_FILE);
@@ -91,7 +91,7 @@ public final class FilePathUtil {
 
     /**
      * 规整 itemId 为合法路径段：保留字母数字及 - _ .，其余替换为 _。
-     * 保证 SummaryKey 与路径一致、缓存可命中（itemId 可能含 / : # 等非法字符）。
+     * 保证 SummaryCoordinate 与路径一致、缓存可命中（itemId 可能含 / : # 等非法字符）。
      * 调用方已确保 itemId 非空，故此处只做字符清洗。
      */
     public static String sanitizeItemId(String itemId) {

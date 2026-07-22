@@ -1,26 +1,27 @@
 package com.waic.springaidemo.pipeline.service.impl;
 
+import com.waic.springaidemo.ai.components.PromptTemplateManager;
 import com.waic.springaidemo.ai.service.ReportGenerator;
-import com.waic.springaidemo.ai.entity.SummaryContext;
 import com.waic.springaidemo.common.entity.CrawlCoordinate;
 import com.waic.springaidemo.common.entity.CrawlResult;
 import com.waic.springaidemo.common.entity.HotItem;
 import com.waic.springaidemo.common.entity.NodeSummary;
-import com.waic.springaidemo.common.entity.ReportResult;
-import com.waic.springaidemo.common.entity.SummaryKey;
+import com.waic.springaidemo.common.entity.SummaryCoordinate;
 import com.waic.springaidemo.common.enums.DataSourceEnum;
 import com.waic.springaidemo.common.enums.LevelEnum;
 import com.waic.springaidemo.common.enums.PeriodEnum;
-import com.waic.springaidemo.pipeline.utils.TextSplitterUtil;
 import com.waic.springaidemo.common.exception.ContentNotFoundException;
+import com.waic.springaidemo.common.config.SummaryProperties;
+import com.waic.springaidemo.crawler.components.CrawlerManager;
 import com.waic.springaidemo.crawler.service.Crawler;
-import com.waic.springaidemo.crawler.service.CrawlerRegistry;
 import com.waic.springaidemo.persistence.service.CrawlRepository;
 import com.waic.springaidemo.persistence.service.SummaryRepository;
 import com.waic.springaidemo.pipeline.service.PipelineService;
+import com.waic.springaidemo.pipeline.utils.TextSplitterUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.core.io.Resource;
 import org.springframework.core.task.TaskExecutor;
 import org.springframework.stereotype.Service;
 import org.springframework.util.CollectionUtils;
@@ -32,6 +33,7 @@ import java.time.LocalDateTime;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Function;
 import java.util.function.Predicate;
 
 /**
@@ -44,17 +46,12 @@ import java.util.function.Predicate;
 @RequiredArgsConstructor
 public class PipelineServiceImpl implements PipelineService {
 
-    private static final int ITEM_MAX_CHARS = 2000;        // D3：ITEM 合并层输出上限（单篇一摘要）
-    private static final int CHUNK_MAX_INPUT_CHARS = 15000;   // 单块切片输入上限（同时也是触发切片阈值）
-    private static final int CHUNK_MAX_OUTPUT_CHARS = 2000;  // 单块（CHUNK）总结输出上限
-    private static final double CHUNK_OVERLAP_RATIO = 0.2;   // 相邻块重叠 = 单块长度 20%
-    private static final int MID_MAX_CHARS = 1000;        // D3：中间聚合层（LANGUAGE/CATEGORY/SOURCE）上限
-    private static final int REPORT_MAX_CHARS = 2000;    // D3：日报上限
-
-    private final CrawlerRegistry crawlerRegistry;
+    private final CrawlerManager crawlerManager;
     private final CrawlRepository crawlRepository;
     private final SummaryRepository summaryRepository;
     private final ReportGenerator reportGenerator;
+    private final PromptTemplateManager promptTemplateManager;
+    private final SummaryProperties summaryProperties;
     @Qualifier("pipelineTaskExecutor")
     private final TaskExecutor pipelineTaskExecutor;
 
@@ -98,7 +95,7 @@ public class PipelineServiceImpl implements PipelineService {
                                       Predicate<Crawler> crawlerFilter, boolean force) {
         List<CrawlResult> results = new ArrayList<>();
         boolean anyMatched = false;
-        for (Crawler crawler : crawlerRegistry.getAllCrawlers()) {
+        for (Crawler crawler : crawlerManager.getAllCrawlers()) {
             if (!crawlerFilter.test(crawler)) {
                 continue;
             }
@@ -140,7 +137,7 @@ public class PipelineServiceImpl implements PipelineService {
             return results;
         }
         for (CrawlResult result : results) {
-            Crawler crawler = crawlerRegistry.resolve(result.getCoordinate()).orElse(null);
+            Crawler crawler = crawlerManager.getCrawlerByCoordinate(result.getCoordinate()).orElse(null);
             if (crawler == null) {
                 log.info("无正文下载器，标记无正文 source={}", result.getCoordinate().source());
                 result.getItems().forEach(i -> i.setContentPath(HotItem.CONTENT_NOT_FOUND));
@@ -167,106 +164,80 @@ public class PipelineServiceImpl implements PipelineService {
         return results;
     }
 
-    // ===== 递归聚合编排（D1/D7/D8） =====
-
     @Override
-    public ReportResult generateReport(PeriodEnum period, LocalDate date, boolean force) throws IOException {
+    public NodeSummary runGenerate(SummaryCoordinate coordinate, boolean force) throws IOException {
+        PeriodEnum period = coordinate.period();
+        LocalDate date = coordinate.date();
         List<CrawlResult> results = crawlRepository.loadItems(period, date);
-        log.info("[report] generateReport start period={} date={} force={} fetchResults={}", period, date, force, results.size());
+        log.info("[report] runGenerate start period={} date={} force={} fetchResults={}", period, date, force, results.size());
         if (results.isEmpty()) {
             log.warn("No data found for period={} date={}", period, date);
             throw new IllegalStateException("No data found for period=" + period + " date=" + date);
         }
-
-        // 建树：source -> category -> language -> FetchResult（后序遍历）
-        Map<DataSourceEnum, Map<String, Map<String, CrawlResult>>> tree = new LinkedHashMap<>();
-        for (CrawlResult fr : results) {
-            CrawlCoordinate coordinate = fr.getCoordinate();
-            tree.computeIfAbsent(coordinate.source(), k -> new LinkedHashMap<>())
-                    .computeIfAbsent(coordinate.normalizedCategory(), k -> new LinkedHashMap<>())
-                    .put(coordinate.normalizedLanguage(), fr);
-        }
-
-        int sourceCount = tree.size();
-        int categoryCount = 0;
-        List<NodeSummary> sourceSummaries = new ArrayList<>();
-
-        for (Map.Entry<DataSourceEnum, Map<String, Map<String, CrawlResult>>> srcEntry : tree.entrySet()) {
-            DataSourceEnum source = srcEntry.getKey();
-            Map<String, Map<String, CrawlResult>> cats = srcEntry.getValue();
-            categoryCount += cats.size();
-
-            List<NodeSummary> categorySummaries = new ArrayList<>();
-            for (Map.Entry<String, Map<String, CrawlResult>> catEntry : cats.entrySet()) {
-                String category = catEntry.getKey();
-                Map<String, CrawlResult> langs = catEntry.getValue();
-
-                List<NodeSummary> langSummaries = new ArrayList<>();
-                for (Map.Entry<String, CrawlResult> langEntry : langs.entrySet()) {
-                    langSummaries.add(summarizeLanguage(
-                            period, date, source, category, langEntry.getKey(), langEntry.getValue(), force));
-                }
-                categorySummaries.add(aggregate(
-                        period, date, source, category, null, langSummaries, LevelEnum.CATEGORY, force));
-            }
-            sourceSummaries.add(aggregate(
-                    period, date, source, null, null, categorySummaries, LevelEnum.SOURCE, force));
-        }
-
-        NodeSummary dateSummary = aggregate(
-                period, date, null, null, null, sourceSummaries, LevelEnum.DATE, force);
-
-        SummaryKey topKey = SummaryKey.builder().period(period).date(date).build();
-        NodeSummary top = summaryRepository.loadSummary(topKey);
-        if (top == null) {
-            top = dateSummary; // 兜底：原子写异常时回退内存对象
-        }
-        log.info("[report] generateReport done period={} date={} sourceCount={} categoryCount={}",
-                period, date, sourceCount, categoryCount);
-        return ReportResult.builder()
-                .period(period)
-                .date(date)
-                .path(top.getPath())
-                .summary(top.getSummary())
-                .sourceCount(sourceCount)
-                .categoryCount(categoryCount)
-                .build();
+        return build(SummaryCoordinate.top(period, date), results, force);
     }
 
     /**
-     * 叶子（language 层）节点：逐篇（ITEM）喂 AI 生成摘要，再聚合为 LANGUAGE 节点。
+     * 坐标驱动递归（DATE→SOURCE→CATEGORY 按 CrawlCoordinate 维度分区；LANGUAGE 为叶子边界）。
+     * 缓存：非 force 且节点已存在则直接读回（断点续跑/防重复）。
      */
-    private NodeSummary summarizeLanguage(PeriodEnum period, LocalDate date, DataSourceEnum source,
-                                          String category, String language, CrawlResult fr, boolean force) throws IOException {
-        SummaryKey langKey = SummaryKey.builder()
-                .period(period).date(date).source(source).category(category).language(language).build();
-        if (!force && summaryRepository.existsSummary(langKey)) {
-            log.info("[report] cache hit, skip node key={}", langKey);
-            return summaryRepository.loadSummary(langKey);
+    private NodeSummary build(SummaryCoordinate key, List<CrawlResult> leaves, boolean force) throws IOException {
+        if (!force && summaryRepository.existsSummary(key)) {
+            log.info("[report] cache hit, skip node key={}", key);
+            return summaryRepository.loadSummary(key);
         }
-
-        log.info("[report] compute leaf node key={} items={}", langKey, fr.getItems().size());
-        List<NodeSummary> itemNodes = new ArrayList<>();
-        for (HotItem item : fr.getItems()) {
-            itemNodes.add(summarizeItem(period, date, source, category, language, item, force));
+        LevelEnum level = key.level();
+        if (level == LevelEnum.LANGUAGE) {
+            // 叶子边界：该语言桶必为唯一 CrawlResult，遍历其 items 建 ITEM 节点 → 聚合成 LANGUAGE
+            CrawlResult fr = leaves.get(0);
+            log.info("[report] compute language node key={} items={}", key, fr.getItems().size());
+            List<NodeSummary> itemNodes = new ArrayList<>();
+            for (HotItem item : fr.getItems()) {
+                itemNodes.add(computeLeaf(key.period(), key.date(), key.source(), key.category(), key.language(), item, force));
+            }
+            return aggregate(key, itemNodes);
         }
-
-        // 聚合 ITEM 节点为 LANGUAGE 节点（与其他中间层一致，MID_MAX_CHARS）
-        return aggregate(period, date, source, category, language, itemNodes, LevelEnum.LANGUAGE, force);
+        // 非叶子：按当前层的下一维度分区（源自 CrawlCoordinate），LinkedHashMap 保序
+        Function<CrawlCoordinate, String> dim = switch (level) {
+            case DATE -> cc -> cc.source().getCode();
+            case SOURCE -> CrawlCoordinate::normalizedCategory;
+            case CATEGORY -> CrawlCoordinate::normalizedLanguage;
+            default -> throw new IllegalStateException("unexpected grouping level: " + level);
+        };
+        Map<String, List<CrawlResult>> groups = new LinkedHashMap<>();
+        for (CrawlResult r : leaves) {
+            groups.computeIfAbsent(dim.apply(r.getCoordinate()), k -> new ArrayList<>()).add(r);
+        }
+        List<NodeSummary> children = new ArrayList<>();
+        for (Map.Entry<String, List<CrawlResult>> e : groups.entrySet()) {
+            children.add(build(childKeyOf(key, level, e.getKey()), e.getValue(), force));
+        }
+        return aggregate(key, children);
     }
 
     /**
-     * 逐篇（ITEM）节点：正文先按 {@link TextSplitterUtil} 切成 CHUNK（单块 ≤ CHUNK_MAX_INPUT_CHARS），
-     * 每个 CHUNK 单独喂 AI 生成块摘要（CHUNK 叶子）；再把它所有 CHUNK 摘要聚合为这一篇的最终摘要。
-     * 单 CHUNK 时直接复用品块摘要、跳过合并；多 CHUNK 才调 summarizeNode 合并。
-     * 正文为空（PENDING/下载失败）时用「标题 + 元数据摘要」拼伪正文再切片（A+C）；
+     * 由父层坐标与分区维度值推导子节点坐标（对应 SummaryCoordinate.of 的层级约定）。
+     */
+    private SummaryCoordinate childKeyOf(SummaryCoordinate parent, LevelEnum parentLevel, String dimValue) {
+        PeriodEnum period = parent.period();
+        LocalDate date = parent.date();
+        return switch (parentLevel) {
+            case DATE -> SummaryCoordinate.of(period, date, DataSourceEnum.of(dimValue), null, null, LevelEnum.SOURCE);
+            case SOURCE -> SummaryCoordinate.of(period, date, parent.source(), dimValue, null, LevelEnum.CATEGORY);
+            case CATEGORY -> SummaryCoordinate.of(period, date, parent.source(), parent.category(), dimValue, LevelEnum.LANGUAGE);
+            default -> throw new IllegalStateException("no child for level " + parentLevel);
+        };
+    }
+
+    /**
+     * 叶（ITEM）节点：整篇/伪正文交给 ai 统一生产；
+     * CHUNK 模式下 ai 额外给出各块摘要，本方法逐块落盘作为子节点（保树结构可追溯）。
+     * 正文为空（PENDING/下载失败）时用「标题 + 元数据摘要」拼伪正文再喂 AI；
      * 完全无内容则兜底 "(无正文，跳过 AI)"，不建 CHUNK，但仍创建 ITEM 节点保证树完整、可重试。
      */
-    private NodeSummary summarizeItem(PeriodEnum period, LocalDate date, DataSourceEnum source,
-                                      String category, String language, HotItem item, boolean force) throws IOException {
-        SummaryKey itemKey = SummaryKey.builder()
-                .period(period).date(date).source(source).category(category).language(language)
-                .itemId(item.getId()).build();
+    private NodeSummary computeLeaf(PeriodEnum period, LocalDate date, DataSourceEnum source,
+                                    String category, String language, HotItem item, boolean force) throws IOException {
+        SummaryCoordinate itemKey = SummaryCoordinate.item(period, date, source, category, language, item.getId());
         if (!force && summaryRepository.existsSummary(itemKey)) {
             log.info("[report] cache hit, skip item key={}", itemKey);
             return summaryRepository.loadSummary(itemKey);
@@ -277,9 +248,9 @@ public class PipelineServiceImpl implements PipelineService {
 
         String inputText;
         if (content != null && !content.isBlank()) {
-            inputText = content; // D4：逐篇不截断（交给 CHUNK 层切片）
+            inputText = content; // D4：逐篇不截断（CHUNK 模式下由 pipeline 切片）
         } else {
-            // A+C：正文缺失，用标题 + 元数据摘要拼伪正文尝试一次 AI
+            // 正文缺失，用标题 + 元数据摘要拼伪正文尝试一次 AI
             StringBuilder pseudo = new StringBuilder();
             if (item.getTitle() != null && !item.getTitle().isBlank()) {
                 pseudo.append("# ").append(item.getTitle()).append("\n");
@@ -291,113 +262,77 @@ public class PipelineServiceImpl implements PipelineService {
         }
 
         String summary;
-        List<String> chunkPaths = new ArrayList<>();
         if (inputText == null) {
-            summary = "(无正文，跳过 AI)"; // A：兜底，不建 CHUNK
+            summary = "(无正文，跳过 AI)"; // 兜底，不建 CHUNK
         } else {
-            List<String> chunks = TextSplitterUtil.split(inputText, CHUNK_MAX_INPUT_CHARS, CHUNK_OVERLAP_RATIO);
-            if (chunks.size() == 1) {
-                // 单 CHUNK：直接复用品块摘要，跳过一次合并 AI 调用
-                NodeSummary chunkNode = summarizeChunk(
-                        period, date, source, category, language, item, chunks.get(0), 0, force);
-                chunkPaths.add(chunkNode.getPath());
-                summary = chunkNode.getSummary();
-            } else {
-                StringBuilder merged = new StringBuilder();
-                for (int i = 0; i < chunks.size(); i++) {
-                    NodeSummary chunkNode = summarizeChunk(
-                            period, date, source, category, language, item, chunks.get(i), i, force);
-                    chunkPaths.add(chunkNode.getPath());
-                    merged.append("## [").append(LevelEnum.CHUNK.getCode())
-                            .append("]\n").append(chunkNode.getSummary()).append("\n\n");
+            // 切片与否由配置决定：leafLevel=CHUNK 且超阈值才切片，否则整篇直接 leaf 模板
+            LevelEnum leafLevel = LevelEnum.of(summaryProperties.getLeafLevel());
+            boolean chunk = leafLevel == LevelEnum.CHUNK
+                    && inputText.length() > summaryProperties.getChunkMaxInputChars();
+            if (chunk) {
+                List<String> chunks = TextSplitterUtil.split(
+                        inputText, summaryProperties.getChunkMaxInputChars(), summaryProperties.getChunkOverlapRatio());
+                List<String> chunkSummaries = new ArrayList<>();
+                for (String chunkText : chunks) {
+                    chunkSummaries.add(reportGenerator.summarize(chunkText, promptTemplateManager.leafTemplate()));
                 }
-                SummaryContext ctx = SummaryContext.builder()
-                        .level(LevelEnum.ITEM).maxChars(ITEM_MAX_CHARS).build();
-                summary = reportGenerator.summarizeNode(ctx, merged.toString());
+                String merged = String.join("\n\n", chunkSummaries);
+                // 多块聚回 ITEM 层（report 模板，2000）；单块直接取该块摘要
+                summary = (chunks.size() == 1)
+                        ? chunkSummaries.get(0)
+                        : reportGenerator.summarize(merged, promptTemplateManager.reportTemplate());
+                for (int i = 0; i < chunkSummaries.size(); i++) {
+                    String chunkId = "c" + i;
+                    SummaryCoordinate chunkKey = SummaryCoordinate.chunk(
+                            period, date, source, category, language, item.getId(), chunkId);
+                    NodeSummary chunkNode = NodeSummary.builder()
+                            .coordinate(chunkKey).summary(chunkSummaries.get(i)).build();
+                    summaryRepository.saveSummary(chunkKey, chunkNode);
+                }
+            } else {
+                summary = reportGenerator.summarize(inputText, promptTemplateManager.leafTemplate());
             }
         }
 
-        NodeSummary.ItemSummary itemSummary = NodeSummary.ItemSummary.builder()
-                .id(item.getId()).title(item.getTitle()).url(item.getUrl()).summary(summary).build();
         NodeSummary node = NodeSummary.builder()
-                .period(period).source(source).date(date).level(LevelEnum.ITEM)
-                .category(category).language(language).itemId(item.getId())
-                .children(chunkPaths).items(List.of(itemSummary)).summary(summary).build();
+                .coordinate(itemKey).summary(summary).build();
         summaryRepository.saveSummary(itemKey, node);
         return node;
     }
 
     /**
-     * 单块（CHUNK）叶子节点：一块正文直接喂 AI 生成块摘要（maxChars=CHUNK_MAX_OUTPUT_CHARS）。
-     * 以 (itemId, chunkId) 为键独立缓存，支持 partial 续跑与 force 全量重算。
+     * 聚合（category/source/date/language）节点：汇总子节点 summary → 调 LLM 或 D10 copy → 组装落盘。
      */
-    private NodeSummary summarizeChunk(PeriodEnum period, LocalDate date, DataSourceEnum source,
-                                       String category, String language, HotItem item,
-                                       String chunkText, int index, boolean force) throws IOException {
-        String chunkId = "c" + index;
-        SummaryKey chunkKey = SummaryKey.builder()
-                .period(period).date(date).source(source).category(category).language(language)
-                .itemId(item.getId()).chunkId(chunkId).build();
-        if (!force && summaryRepository.existsSummary(chunkKey)) {
-            log.info("[report] cache hit, skip chunk key={}", chunkKey);
-            return summaryRepository.loadSummary(chunkKey);
-        }
-
-        log.info("[report] compute chunk key={} len={}", chunkKey, chunkText.length());
-        SummaryContext ctx = SummaryContext.builder()
-                .level(LevelEnum.CHUNK).maxChars(CHUNK_MAX_OUTPUT_CHARS).build();
-        String chunkSummary = reportGenerator.summarizeItem(ctx, chunkText);
-
-        NodeSummary chunkNode = NodeSummary.builder()
-                .period(period).source(source).date(date).level(LevelEnum.CHUNK)
-                .category(category).language(language).itemId(item.getId()).chunkId(chunkId)
-                .children(new ArrayList<>()).summary(chunkSummary).build();
-        summaryRepository.saveSummary(chunkKey, chunkNode);
-        return chunkNode;
-    }
-
-    /**
-     * 聚合（category/source/date）节点：汇总子节点 summary → 调 LLM 或 D10 copy → 组装落盘。
-     */
-    private NodeSummary aggregate(PeriodEnum period, LocalDate date, DataSourceEnum source,
-                                  String category, String language, List<NodeSummary> children,
-                                  LevelEnum level, boolean force) throws IOException {
-        SummaryKey key = buildKey(period, date, source, category, language, level);
-        if (!force && summaryRepository.existsSummary(key)) {
-            log.info("[report] cache hit, skip node key={}", key);
-            return summaryRepository.loadSummary(key);
-        }
-
+    private NodeSummary aggregate(SummaryCoordinate key, List<NodeSummary> children) throws IOException {
+        LevelEnum level = key.level();
         log.info("[report] compute aggregate node key={} level={} children={}", key, level, children.size());
         // D10 copy：非叶子层且唯一子节点的「被折叠段」未指定（null/空白）→ 直接 copy，不调 LLM
         if (level != LevelEnum.ITEM && children.size() == 1 && isPlaceholderChild(level, children.get(0))) {
-            SummaryKey childKey = childSummaryKey(period, date, source, category, language, level, children.get(0));
+            SummaryCoordinate childKey = SummaryCoordinate.childOf(
+                    key.period(), key.date(), key.source(), key.category(), key.language(), level, children.get(0));
             summaryRepository.copySummary(childKey, key);
             return summaryRepository.loadSummary(key);
         }
 
         StringBuilder sb = new StringBuilder();
-        List<String> childPaths = new ArrayList<>();
         for (NodeSummary child : children) {
-            childPaths.add(child.getPath());
-            sb.append("## [").append(child.getLevel().getCode());
-            if (child.getCategory() != null) {
-                sb.append(" category=").append(child.getCategory());
+            sb.append("## [").append(child.level().getCode());
+            if (child.getCoordinate().category() != null) {
+                sb.append(" category=").append(child.getCoordinate().category());
             }
-            if (child.getLanguage() != null) {
-                sb.append(" language=").append(child.getLanguage());
+            if (child.getCoordinate().language() != null) {
+                sb.append(" language=").append(child.getCoordinate().language());
             }
             sb.append("]\n").append(child.getSummary()).append("\n\n");
         }
 
-        int maxChars = (level == LevelEnum.DATE) ? REPORT_MAX_CHARS : MID_MAX_CHARS; // D3
-        SummaryContext ctx = SummaryContext.builder().level(level).maxChars(maxChars).build();
-        String summary = reportGenerator.summarizeNode(ctx, sb.toString());
+        Resource template = (level == LevelEnum.DATE)
+                ? promptTemplateManager.reportTemplate()
+                : promptTemplateManager.nodeTemplate();
+        String summary = reportGenerator.summarize(sb.toString(), template);
 
         NodeSummary node = NodeSummary.builder()
-                .period(period).source(source).date(date).level(level)
-                .category(category).language(language)
-                .children(childPaths).summary(summary).build();
+                .coordinate(key).summary(summary).build();
         summaryRepository.saveSummary(key, node);
         return node;
     }
@@ -412,40 +347,15 @@ public class PipelineServiceImpl implements PipelineService {
      */
     private boolean isPlaceholderChild(LevelEnum level, NodeSummary child) {
         return switch (level) {
-            case CATEGORY -> !StringUtils.hasText(child.getLanguage());
-            case SOURCE -> !StringUtils.hasText(child.getCategory());
-            case DATE -> child.getSource() == null;
-            case LANGUAGE -> !StringUtils.hasText(child.getItemId());
+            case CATEGORY -> !StringUtils.hasText(child.getCoordinate().language());
+            case SOURCE -> !StringUtils.hasText(child.getCoordinate().category());
+            case DATE -> child.getCoordinate().source() == null;
+            case LANGUAGE -> !StringUtils.hasText(child.getCoordinate().itemId());
             default -> false; // ITEM
         };
     }
 
-    /**
-     * 由父层 level 推导唯一子节点 child 对应的 SummaryKey（用于 D10 copy 的源定位）。
-     */
-    private SummaryKey childSummaryKey(PeriodEnum period, LocalDate date, DataSourceEnum source,
-                                       String category, String language, LevelEnum level, NodeSummary child) {
-        SummaryKey.SummaryKeyBuilder builder = SummaryKey.builder().period(period).date(date);
-        switch (level) {
-            case CATEGORY -> builder.source(source).category(category).language(child.getLanguage());
-            case SOURCE -> builder.source(source).category(child.getCategory());
-            case DATE -> builder.source(child.getSource());
-            case LANGUAGE -> builder.source(source).category(category).language(language).itemId(child.getItemId());
-            default -> { } // ITEM：不会进入
-        }
-        return builder.build();
-    }
 
-    /**
-     * 由层级推导 SummaryKey 各段（上层段留 null，见 SummaryKey.level() 约定）。
-     */
-    private SummaryKey buildKey(PeriodEnum period, LocalDate date, DataSourceEnum source,
-                                 String category, String language, LevelEnum level) {
-        String lang = (level == LevelEnum.CATEGORY) ? null : language;
-        String cat = (level == LevelEnum.SOURCE || level == LevelEnum.DATE) ? null : category;
-        DataSourceEnum src = (level == LevelEnum.DATE) ? null : source;
-        return SummaryKey.builder().period(period).date(date).source(src).category(cat).language(lang).build();
-    }
 
     // ===== 组合任务：抓取 + 汇总（异步 + 断点续跑 + 防重复触发） =====
 
@@ -457,6 +367,7 @@ public class PipelineServiceImpl implements PipelineService {
      * </ul>
      * 不使用 {@code @Async}（避开同 bean 自调用不异步的坑），改为手动提交到注入的有界线程池。
      */
+    @Override
     public PipelineService.PipelineTriggerStatus triggerPipeline(PeriodEnum period) {
         LocalDate today = LocalDate.now();
         AtomicReference<PipelineService.PipelineTriggerStatus> ref = new AtomicReference<>();
@@ -482,10 +393,10 @@ public class PipelineServiceImpl implements PipelineService {
         try {
             log.info("[pipeline] start period={} date={}", period, date);
             doDownload(doCrawl(date, period, crawler -> true, false));
-            ReportResult report = generateReport(period, date, false);
+            NodeSummary report = runGenerate(SummaryCoordinate.top(period, date), false);
             updateState(period, TaskStatus.SUCCESS, null);
-            log.info("[pipeline] done period={} date={} sourceCount={} categoryCount={} path={}",
-                    period, date, report.getSourceCount(), report.getCategoryCount(), report.getPath());
+            log.info("[pipeline] done period={} date={} path={}",
+                    period, date, report.path());
         } catch (Exception e) {
             log.error("[pipeline] failed period={} date={}", period, date, e);
             updateState(period, TaskStatus.FAILED, e.getMessage());

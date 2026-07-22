@@ -1,6 +1,7 @@
-package com.waic.springaidemo.crawler.service;
+package com.waic.springaidemo.crawler.components;
 
 import com.waic.springaidemo.common.entity.CrawlCoordinate;
+import com.waic.springaidemo.crawler.service.Crawler;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -16,7 +17,7 @@ import java.util.Optional;
 @Slf4j
 @Component
 @RequiredArgsConstructor
-public class CrawlerRegistry {
+public class CrawlerManager {
 
     private final List<Crawler> crawlers;
 
@@ -36,7 +37,7 @@ public class CrawlerRegistry {
      * @param coordinate 抓取坐标
      * @return 抓取器（可能为 empty）
      */
-    public Optional<Crawler> resolve(CrawlCoordinate coordinate) {
+    public Optional<Crawler> getCrawlerByCoordinate(CrawlCoordinate coordinate) {
         for (Crawler crawler : crawlers) {
             if (crawler.supports(coordinate)) {
                 return Optional.of(crawler);
