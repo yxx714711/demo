@@ -23,6 +23,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.core.task.TaskExecutor;
 import org.springframework.stereotype.Service;
+import org.springframework.util.CollectionUtils;
 import org.springframework.util.StringUtils;
 
 import java.io.IOException;
@@ -125,9 +126,10 @@ public class PipelineServiceImpl implements PipelineService {
      * 仅对 contentPath 为 "PENDING" 的 item 发起下载；单条失败保持 PENDING 供续跑。
      */
     private List<CrawlResult> persistAndDownload(List<CrawlResult> results) throws IOException {
-        if (results.isEmpty()) {
+        if (CollectionUtils.isEmpty(results)) {
             return results;
         }
+
         CrawlCoordinate firstCoordinate = results.get(0).getCoordinate();
         LocalDate date = firstCoordinate.date();
         PeriodEnum period = firstCoordinate.period();

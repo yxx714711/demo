@@ -18,8 +18,10 @@ public class HotItem {
     /**
      * 正文下载状态
      */
-    public static final String CONTENT_PENDING = "PENDING"; // 待下载（初始态，pipeline 阶段统一设置）
-    public static final String CONTENT_NOT_FOUND = "404";   // 无正文（404 / 节点缺失 / 空正文），终态不重试
+    // 待下载（初始态，pipeline 阶段统一设置）
+    public static final String CONTENT_PENDING = "PENDING";
+    // 无正文（404 / 节点缺失 / 空正文），终态不重试
+    public static final String CONTENT_NOT_FOUND = "404";
 
     /**
      * 唯一标识，建议使用平台 + 项目/文章ID

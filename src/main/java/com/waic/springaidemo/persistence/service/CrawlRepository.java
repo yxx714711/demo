@@ -12,6 +12,7 @@ import java.util.List;
 /**
  * 原始抓取结果持久化（hotitems.json + markdown 正文）。
  * 与聚合树持久化解耦，见 {@link SummaryRepository}。
+ * @author 10542
  */
 public interface CrawlRepository {
 

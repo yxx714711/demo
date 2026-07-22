@@ -5,6 +5,7 @@ import lombok.RequiredArgsConstructor;
 
 /**
  * 数据源枚举
+ * @author 10542
  */
 @Getter
 @RequiredArgsConstructor
@@ -18,11 +19,22 @@ public enum DataSourceEnum {
     private final String name;
 
     public static DataSourceEnum of(String code) {
+        DataSourceEnum result = ofNullable(code);
+        if (result == null) {
+            throw new IllegalArgumentException("Unknown data source: " + code);
+        }
+        return result;
+    }
+
+    public static DataSourceEnum ofNullable(String code) {
+        if (code == null) {
+            return null;
+        }
         for (DataSourceEnum source : values()) {
             if (source.code.equalsIgnoreCase(code)) {
                 return source;
             }
         }
-        throw new IllegalArgumentException("Unknown data source: " + code);
+        return null;
     }
 }

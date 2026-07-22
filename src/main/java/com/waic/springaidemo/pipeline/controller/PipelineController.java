@@ -1,6 +1,5 @@
 package com.waic.springaidemo.pipeline.controller;
 
-import com.waic.springaidemo.ai.service.ReportGenerator;
 import com.waic.springaidemo.common.entity.CrawlCoordinate;
 import com.waic.springaidemo.common.entity.CrawlResult;
 import com.waic.springaidemo.common.entity.ReportResult;
@@ -9,7 +8,6 @@ import com.waic.springaidemo.common.enums.PeriodEnum;
 import com.waic.springaidemo.pipeline.service.PipelineService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -21,10 +19,10 @@ import org.springframework.web.bind.annotation.RestController;
 import java.io.IOException;
 import java.time.LocalDate;
 import java.util.List;
-import java.util.Map;
 
 /**
  * Pipeline 控制器
+ * @author 10542
  */
 @Slf4j
 @RestController
@@ -33,10 +31,6 @@ import java.util.Map;
 public class PipelineController {
 
     private final PipelineService pipelineService;
-    private final ReportGenerator reportGenerator;
-
-    @Value("${spring.ai.ollama.chat.model:unknown}")
-    private String ollamaModel;
 
     /**
      * 手动触发抓取：全量或指定数据源。
@@ -52,14 +46,11 @@ public class PipelineController {
     @PostMapping("/pipeline/crawl")
     public List<CrawlResult> crawl(@RequestParam String period,
                                    @RequestParam(required = false) String source,
-                                   @RequestParam(required = false)
-                                   @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) throws IOException {
+                                   @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) throws IOException {
         if (date == null) {
             date = LocalDate.now();
         }
-        DataSourceEnum resolvedSource = org.springframework.util.StringUtils.hasText(source)
-                ? DataSourceEnum.of(source)
-                : null;
+        DataSourceEnum resolvedSource = DataSourceEnum.ofNullable(source);
         CrawlCoordinate coordinate = new CrawlCoordinate(resolvedSource, PeriodEnum.of(period), date, null, null);
         return pipelineService.runCrawl(coordinate);
     }
@@ -97,7 +88,7 @@ public class PipelineController {
         long start = System.currentTimeMillis();
         log.info("Daily report start date={}", date);
         try {
-            ReportResult result = pipelineService.generateDailyReport(date);
+            ReportResult result = pipelineService.generateReport(PeriodEnum.DAILY, date);
             long elapsed = System.currentTimeMillis() - start;
             log.info("Daily report success date={} elapsedMs={} sourceCount={} categoryCount={} path={} summaryLen={}",
                     date, elapsed, result.getSourceCount(), result.getCategoryCount(),
@@ -110,38 +101,7 @@ public class PipelineController {
         }
     }
 
-    /**
-     * 测试 chatClient（Ollama）可用性：默认 prompt="你好"，走流式路径。
-     */
-    @PostMapping("/llm/ping")
-    public Map<String, Object> pingLlm(@RequestParam(required = false, defaultValue = "你好") String prompt) {
-        long start = System.currentTimeMillis();
-        log.info("LLM ping start prompt={}", prompt);
-        try {
-            String reply = reportGenerator.ping(prompt);
-            long elapsed = System.currentTimeMillis() - start;
-            log.info("LLM ping success elapsedMs={} replyLen={}", elapsed, safeLen(reply));
-            return Map.of(
-                    "ok", true,
-                    "latencyMs", elapsed,
-                    "prompt", prompt,
-                    "reply", truncate(reply, 200),
-                    "model", ollamaModel);
-        } catch (Exception e) {
-            long elapsed = System.currentTimeMillis() - start;
-            log.error("LLM ping failed prompt={} elapsedMs={}", prompt, elapsed, e);
-            throw e;
-        }
-    }
-
     private static int safeLen(String s) {
         return s == null ? 0 : s.length();
-    }
-
-    private static String truncate(String s, int max) {
-        if (s == null) {
-            return "";
-        }
-        return s.length() <= max ? s : s.substring(0, max) + "...";
     }
 }
