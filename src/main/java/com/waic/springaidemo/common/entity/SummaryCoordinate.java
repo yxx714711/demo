@@ -65,22 +65,22 @@ public record SummaryCoordinate(
     // ===== 工厂：按层级构造（避免长参位置调用，提升可读性） =====
 
     public static SummaryCoordinate top(PeriodEnum period, LocalDate date) {
-        return new SummaryCoordinate(new CrawlCoordinate(null, period, date, null, null), null, null);
+        return new SummaryCoordinate(new CrawlCoordinate(period, date, null, null, null), null, null);
     }
 
     public static SummaryCoordinate language(PeriodEnum period, LocalDate date, DataSourceEnum source,
                                              String category, String language) {
-        return new SummaryCoordinate(new CrawlCoordinate(source, period, date, category, language), null, null);
+        return new SummaryCoordinate(new CrawlCoordinate(period, date, source, category, language), null, null);
     }
 
     public static SummaryCoordinate item(PeriodEnum period, LocalDate date, DataSourceEnum source,
                                          String category, String language, String itemId) {
-        return new SummaryCoordinate(new CrawlCoordinate(source, period, date, category, language), itemId, null);
+        return new SummaryCoordinate(new CrawlCoordinate(period, date, source, category, language), itemId, null);
     }
 
     public static SummaryCoordinate chunk(PeriodEnum period, LocalDate date, DataSourceEnum source,
                                           String category, String language, String itemId, String chunkId) {
-        return new SummaryCoordinate(new CrawlCoordinate(source, period, date, category, language), itemId, chunkId);
+        return new SummaryCoordinate(new CrawlCoordinate(period, date, source, category, language), itemId, chunkId);
     }
 
     /**
@@ -91,21 +91,22 @@ public record SummaryCoordinate(
         String lang = (level == LevelEnum.CATEGORY) ? null : language;
         String cat = (level == LevelEnum.SOURCE || level == LevelEnum.DATE) ? null : category;
         DataSourceEnum src = (level == LevelEnum.DATE) ? null : source;
-        return new SummaryCoordinate(new CrawlCoordinate(src, period, date, cat, lang), null, null);
+        return new SummaryCoordinate(new CrawlCoordinate(period, date, src, cat, lang), null, null);
     }
 
     /**
      * 由父层 level 推导唯一子节点对应的坐标（用于 D10 copy 的源定位）。
      */
     public static SummaryCoordinate childOf(PeriodEnum period, LocalDate date, DataSourceEnum source,
-                                            String category, String language, LevelEnum level, NodeSummary child) {
+                                            String category, String language, LevelEnum level, SummaryResult child) {
         SummaryCoordinate c = child.getCoordinate();
         return switch (level) {
             case CATEGORY -> language(period, date, source, category, c.language());
-            case SOURCE -> new SummaryCoordinate(new CrawlCoordinate(source, period, date, c.category(), null), null, null);
-            case DATE -> new SummaryCoordinate(new CrawlCoordinate(c.source(), period, date, null, null), null, null);
+            case SOURCE -> new SummaryCoordinate(new CrawlCoordinate(period, date, source, c.category(), null), null, null);
+            case DATE -> new SummaryCoordinate(new CrawlCoordinate(period, date, c.source(), null, null), null, null);
             case LANGUAGE -> item(period, date, source, category, language, c.itemId());
-            default -> top(period, date); // ITEM：不会进入
+            // ITEM：不会进入
+            default -> top(period, date);
         };
     }
 

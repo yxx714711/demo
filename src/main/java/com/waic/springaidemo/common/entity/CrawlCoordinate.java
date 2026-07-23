@@ -7,9 +7,9 @@ import org.springframework.util.StringUtils;
 import java.time.LocalDate;
 
 public record CrawlCoordinate(
-        DataSourceEnum source,
         PeriodEnum period,
         LocalDate date,
+        DataSourceEnum source,
         String category,
         String language
 ) {

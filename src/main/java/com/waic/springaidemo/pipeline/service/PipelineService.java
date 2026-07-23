@@ -2,7 +2,7 @@ package com.waic.springaidemo.pipeline.service;
 
 import com.waic.springaidemo.common.entity.CrawlCoordinate;
 import com.waic.springaidemo.common.entity.CrawlResult;
-import com.waic.springaidemo.common.entity.NodeSummary;
+import com.waic.springaidemo.common.entity.SummaryResult;
 import com.waic.springaidemo.common.entity.SummaryCoordinate;
 import com.waic.springaidemo.common.enums.PeriodEnum;
 
@@ -41,7 +41,7 @@ public interface PipelineService {
      * @return 顶层 summaries 节点（含派生 path / summary，可直接取用或落盘续跑）
      * @throws IOException IO 异常
      */
-    NodeSummary runGenerate(SummaryCoordinate coordinate, boolean force) throws IOException;
+    SummaryResult runGenerate(SummaryCoordinate coordinate, boolean force) throws IOException;
 
     /**
      * 触发组合任务（抓取→汇总），异步执行。立即返回触发结果，不阻塞等待。

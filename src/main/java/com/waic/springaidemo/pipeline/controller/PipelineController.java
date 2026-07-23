@@ -52,7 +52,7 @@ public class PipelineController {
             date = LocalDate.now();
         }
         DataSourceEnum resolvedSource = DataSourceEnum.ofNullable(source);
-        CrawlCoordinate coordinate = new CrawlCoordinate(resolvedSource, PeriodEnum.of(period), date, null, null);
+        CrawlCoordinate coordinate = new CrawlCoordinate(PeriodEnum.of(period), date, resolvedSource, null, null);
         return pipelineService.runCrawl(coordinate, force);
     }
 

@@ -63,7 +63,7 @@ public interface Crawler {
                 .flatMap(category ->
                         // 每次都基于集合重新生成 Stream，避免重复消费
                         (languages.isEmpty() ? Stream.of((String) null) : languages.stream())
-                                .map(language -> new CrawlCoordinate(getDataSource(), period, date, category, language))
+                                .map(language -> new CrawlCoordinate(period, date, getDataSource(), category, language))
                 )
                 .toList();
     }

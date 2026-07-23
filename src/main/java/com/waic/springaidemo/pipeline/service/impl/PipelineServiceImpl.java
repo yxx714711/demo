@@ -5,7 +5,7 @@ import com.waic.springaidemo.ai.service.ReportGenerator;
 import com.waic.springaidemo.common.entity.CrawlCoordinate;
 import com.waic.springaidemo.common.entity.CrawlResult;
 import com.waic.springaidemo.common.entity.HotItem;
-import com.waic.springaidemo.common.entity.NodeSummary;
+import com.waic.springaidemo.common.entity.SummaryResult;
 import com.waic.springaidemo.common.entity.SummaryCoordinate;
 import com.waic.springaidemo.common.enums.DataSourceEnum;
 import com.waic.springaidemo.common.enums.LevelEnum;
@@ -39,7 +39,7 @@ import java.util.function.Predicate;
 /**
  * Pipeline 编排服务实现
  * <p>单一职责：递归后序遍历 data 树，逐节点调 {@code reportGenerator} 生成文本、
- * 组装 {@link NodeSummary} 并交持久化服务落盘。本类不调用 LLM 以外逻辑，也不直接写文件。</p>
+ * 组装 {@link SummaryResult} 并交持久化服务落盘。本类不调用 LLM 以外逻辑，也不直接写文件。</p>
  */
 @Slf4j
 @Service
@@ -165,7 +165,7 @@ public class PipelineServiceImpl implements PipelineService {
     }
 
     @Override
-    public NodeSummary runGenerate(SummaryCoordinate coordinate, boolean force) throws IOException {
+    public SummaryResult runGenerate(SummaryCoordinate coordinate, boolean force) throws IOException {
         PeriodEnum period = coordinate.period();
         LocalDate date = coordinate.date();
         List<CrawlResult> results = crawlRepository.loadItems(period, date);
@@ -181,7 +181,7 @@ public class PipelineServiceImpl implements PipelineService {
      * 坐标驱动递归（DATE→SOURCE→CATEGORY 按 CrawlCoordinate 维度分区；LANGUAGE 为叶子边界）。
      * 缓存：非 force 且节点已存在则直接读回（断点续跑/防重复）。
      */
-    private NodeSummary build(SummaryCoordinate key, List<CrawlResult> leaves, boolean force) throws IOException {
+    private SummaryResult build(SummaryCoordinate key, List<CrawlResult> leaves, boolean force) throws IOException {
         if (!force && summaryRepository.existsSummary(key)) {
             log.info("[report] cache hit, skip node key={}", key);
             return summaryRepository.loadSummary(key);
@@ -189,10 +189,10 @@ public class PipelineServiceImpl implements PipelineService {
         LevelEnum level = key.level();
         if (level == LevelEnum.LANGUAGE) {
             // 叶子边界：该语言桶必为唯一 CrawlResult，遍历其 items 建 ITEM 节点 → 聚合成 LANGUAGE
-            CrawlResult fr = leaves.get(0);
-            log.info("[report] compute language node key={} items={}", key, fr.getItems().size());
-            List<NodeSummary> itemNodes = new ArrayList<>();
-            for (HotItem item : fr.getItems()) {
+            CrawlResult crawlResult = leaves.get(0);
+            log.info("[report] compute language node key={} items={}", key, crawlResult.getItems().size());
+            List<SummaryResult> itemNodes = new ArrayList<>();
+            for (HotItem item : crawlResult.getItems()) {
                 itemNodes.add(computeLeaf(key.period(), key.date(), key.source(), key.category(), key.language(), item, force));
             }
             return aggregate(key, itemNodes);
@@ -208,7 +208,7 @@ public class PipelineServiceImpl implements PipelineService {
         for (CrawlResult r : leaves) {
             groups.computeIfAbsent(dim.apply(r.getCoordinate()), k -> new ArrayList<>()).add(r);
         }
-        List<NodeSummary> children = new ArrayList<>();
+        List<SummaryResult> children = new ArrayList<>();
         for (Map.Entry<String, List<CrawlResult>> e : groups.entrySet()) {
             children.add(build(childKeyOf(key, level, e.getKey()), e.getValue(), force));
         }
@@ -235,8 +235,8 @@ public class PipelineServiceImpl implements PipelineService {
      * 正文为空（PENDING/下载失败）时用「标题 + 元数据摘要」拼伪正文再喂 AI；
      * 完全无内容则兜底 "(无正文，跳过 AI)"，不建 CHUNK，但仍创建 ITEM 节点保证树完整、可重试。
      */
-    private NodeSummary computeLeaf(PeriodEnum period, LocalDate date, DataSourceEnum source,
-                                    String category, String language, HotItem item, boolean force) throws IOException {
+    private SummaryResult computeLeaf(PeriodEnum period, LocalDate date, DataSourceEnum source,
+                                      String category, String language, HotItem item, boolean force) throws IOException {
         SummaryCoordinate itemKey = SummaryCoordinate.item(period, date, source, category, language, item.getId());
         if (!force && summaryRepository.existsSummary(itemKey)) {
             log.info("[report] cache hit, skip item key={}", itemKey);
@@ -285,7 +285,7 @@ public class PipelineServiceImpl implements PipelineService {
                     String chunkId = "c" + i;
                     SummaryCoordinate chunkKey = SummaryCoordinate.chunk(
                             period, date, source, category, language, item.getId(), chunkId);
-                    NodeSummary chunkNode = NodeSummary.builder()
+                    SummaryResult chunkNode = SummaryResult.builder()
                             .coordinate(chunkKey).summary(chunkSummaries.get(i)).build();
                     summaryRepository.saveSummary(chunkKey, chunkNode);
                 }
@@ -294,7 +294,7 @@ public class PipelineServiceImpl implements PipelineService {
             }
         }
 
-        NodeSummary node = NodeSummary.builder()
+        SummaryResult node = SummaryResult.builder()
                 .coordinate(itemKey).summary(summary).build();
         summaryRepository.saveSummary(itemKey, node);
         return node;
@@ -303,7 +303,7 @@ public class PipelineServiceImpl implements PipelineService {
     /**
      * 聚合（category/source/date/language）节点：汇总子节点 summary → 调 LLM 或 D10 copy → 组装落盘。
      */
-    private NodeSummary aggregate(SummaryCoordinate key, List<NodeSummary> children) throws IOException {
+    private SummaryResult aggregate(SummaryCoordinate key, List<SummaryResult> children) throws IOException {
         LevelEnum level = key.level();
         log.info("[report] compute aggregate node key={} level={} children={}", key, level, children.size());
         // D10 copy：非叶子层且唯一子节点的「被折叠段」未指定（null/空白）→ 直接 copy，不调 LLM
@@ -315,7 +315,7 @@ public class PipelineServiceImpl implements PipelineService {
         }
 
         StringBuilder sb = new StringBuilder();
-        for (NodeSummary child : children) {
+        for (SummaryResult child : children) {
             sb.append("## [").append(child.level().getCode());
             if (child.getCoordinate().category() != null) {
                 sb.append(" category=").append(child.getCoordinate().category());
@@ -331,7 +331,7 @@ public class PipelineServiceImpl implements PipelineService {
                 : promptTemplateManager.nodeTemplate();
         String summary = reportGenerator.summarize(sb.toString(), template);
 
-        NodeSummary node = NodeSummary.builder()
+        SummaryResult node = SummaryResult.builder()
                 .coordinate(key).summary(summary).build();
         summaryRepository.saveSummary(key, node);
         return node;
@@ -345,7 +345,7 @@ public class PipelineServiceImpl implements PipelineService {
      * - DATE：折叠 source 段（code，实际恒指定）
      * - LANGUAGE：折叠 itemId 段（实际不会触发，保留以贴合「除叶子外均适用」）
      */
-    private boolean isPlaceholderChild(LevelEnum level, NodeSummary child) {
+    private boolean isPlaceholderChild(LevelEnum level, SummaryResult child) {
         return switch (level) {
             case CATEGORY -> !StringUtils.hasText(child.getCoordinate().language());
             case SOURCE -> !StringUtils.hasText(child.getCoordinate().category());
@@ -393,7 +393,7 @@ public class PipelineServiceImpl implements PipelineService {
         try {
             log.info("[pipeline] start period={} date={}", period, date);
             doDownload(doCrawl(date, period, crawler -> true, false));
-            NodeSummary report = runGenerate(SummaryCoordinate.top(period, date), false);
+            SummaryResult report = runGenerate(SummaryCoordinate.top(period, date), false);
             updateState(period, TaskStatus.SUCCESS, null);
             log.info("[pipeline] done period={} date={} path={}",
                     period, date, report.path());

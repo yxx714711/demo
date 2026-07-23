@@ -16,8 +16,9 @@ import java.util.List;
  */
 public final class FilePathUtil {
 
-    public static final String HOTITEMS_FILE = "hotitems.json";
     private static final String DATA_DIR = "data";
+    public static final String HOTITEMS_FILE = "hotitems.json";
+
     private static final String SUMMARIES_DIR = "summaries";
     private static final String SUMMARY_FILE = "summary.json";
 
@@ -65,25 +66,25 @@ public final class FilePathUtil {
      * 仅当对应维度非 null/空白时才追加该段，故 GitHub（无 category）路径不含 category 段、
      * 掘金（无 language）路径不含 language 段，未指定维度不会凭空生成 "_" 目录。
      */
-    public static Path getSummaryPath(SummaryCoordinate key) {
+    public static Path getSummaryPath(SummaryCoordinate coordinate) {
         List<String> parts = new ArrayList<>();
         parts.add(SUMMARIES_DIR);
-        parts.add(key.period().getCode());
-        parts.add(key.date().toString());
-        if (key.source() != null) {
-            parts.add(key.source().getCode());
+        parts.add(coordinate.period().getCode());
+        parts.add(coordinate.date().toString());
+        if (coordinate.source() != null) {
+            parts.add(coordinate.source().getCode());
         }
-        if (StringUtils.hasText(key.category())) {
-            parts.add(key.category());
+        if (StringUtils.hasText(coordinate.category())) {
+            parts.add(coordinate.category());
         }
-        if (StringUtils.hasText(key.language())) {
-            parts.add(key.language());
+        if (StringUtils.hasText(coordinate.language())) {
+            parts.add(coordinate.language());
         }
-        if (StringUtils.hasText(key.itemId())) {
-            parts.add(sanitizeItemId(key.itemId()));
+        if (StringUtils.hasText(coordinate.itemId())) {
+            parts.add(sanitizeItemId(coordinate.itemId()));
         }
-        if (StringUtils.hasText(key.chunkId())) {
-            parts.add(sanitizeChunkId(key.chunkId()));
+        if (StringUtils.hasText(coordinate.chunkId())) {
+            parts.add(sanitizeChunkId(coordinate.chunkId()));
         }
         return Paths.get(parts.get(0), parts.subList(1, parts.size()).toArray(new String[0]))
                 .resolve(SUMMARY_FILE);

@@ -103,7 +103,7 @@ public class CrawlRepositoryImpl implements CrawlRepository {
     public List<CrawlResult> loadItems(PeriodEnum period, LocalDate date) throws IOException {
         List<CrawlResult> results = new ArrayList<>();
         for (DataSourceEnum source : DataSourceEnum.values()) {
-            results.addAll(loadItems(new CrawlCoordinate(source, period, date, null, null)));
+            results.addAll(loadItems(new CrawlCoordinate(period, date, source, null, null)));
         }
         return results;
     }

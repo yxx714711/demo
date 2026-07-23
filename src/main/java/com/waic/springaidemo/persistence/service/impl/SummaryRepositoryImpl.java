@@ -2,7 +2,7 @@ package com.waic.springaidemo.persistence.service.impl;
 
 import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.ObjectMapper;
-import com.waic.springaidemo.common.entity.NodeSummary;
+import com.waic.springaidemo.common.entity.SummaryResult;
 import com.waic.springaidemo.common.entity.SummaryCoordinate;
 import com.waic.springaidemo.persistence.utils.FilePathUtil;
 import com.waic.springaidemo.persistence.service.SummaryRepository;
@@ -18,6 +18,7 @@ import java.nio.file.StandardCopyOption;
 
 /**
  * 聚合树（summary.json）持久化实现
+ * @author 10542
  */
 @Slf4j
 @Service
@@ -27,13 +28,13 @@ public class SummaryRepositoryImpl implements SummaryRepository {
     private final ObjectMapper objectMapper;
 
     @Override
-    public boolean existsSummary(SummaryCoordinate key) {
-        return Files.exists(FilePathUtil.getSummaryPath(key));
+    public boolean existsSummary(SummaryCoordinate coordinate) {
+        return Files.exists(FilePathUtil.getSummaryPath(coordinate));
     }
 
     @Override
-    public NodeSummary loadSummary(SummaryCoordinate key) throws IOException {
-        Path filePath = FilePathUtil.getSummaryPath(key);
+    public SummaryResult loadSummary(SummaryCoordinate coordinate) throws IOException {
+        Path filePath = FilePathUtil.getSummaryPath(coordinate);
         if (!Files.exists(filePath)) {
             return null;
         }
@@ -42,11 +43,11 @@ public class SummaryRepositoryImpl implements SummaryRepository {
     }
 
     @Override
-    public void saveSummary(SummaryCoordinate key, NodeSummary summary) throws IOException {
-        Path filePath = FilePathUtil.getSummaryPath(key);
+    public void saveSummary(SummaryCoordinate coordinate, SummaryResult result) throws IOException {
+        Path filePath = FilePathUtil.getSummaryPath(coordinate);
         Files.createDirectories(filePath.getParent());
         // path 由 coordinate 派生（NodeSummary.path()），无需在节点内持久化
-        String json = objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(summary);
+        String json = objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(result);
         Path temp = Files.createTempFile(filePath.getParent(), ".summary-", ".tmp");
         try {
             Files.writeString(temp, json, StandardCharsets.UTF_8);
@@ -64,7 +65,7 @@ public class SummaryRepositoryImpl implements SummaryRepository {
 
     @Override
     public void copySummary(SummaryCoordinate src, SummaryCoordinate dst) throws IOException {
-        NodeSummary node = loadSummary(src);
+        SummaryResult node = loadSummary(src);
         if (node == null) {
             throw new IllegalStateException("source summary not found: " + src);
         }
