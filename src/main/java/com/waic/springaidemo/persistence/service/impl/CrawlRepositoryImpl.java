@@ -40,8 +40,7 @@ public class CrawlRepositoryImpl implements CrawlRepository {
     @Override
     public void saveItems(CrawlResult result) throws IOException {
         CrawlCoordinate coordinate = result.getCoordinate();
-        Path filePath = FilePathUtil.getHotItemsFilePath(coordinate.source(), coordinate.period(),
-                coordinate.date(), coordinate.normalizedCategory(), coordinate.normalizedLanguage());
+        Path filePath = FilePathUtil.getHotItemsJsonPath(coordinate);
         Files.createDirectories(filePath.getParent());
         String json = objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(result);
         Files.writeString(filePath, json, StandardCharsets.UTF_8);
@@ -51,8 +50,7 @@ public class CrawlRepositoryImpl implements CrawlRepository {
     @Override
     public void updateItems(CrawlResult result) throws IOException {
         CrawlCoordinate coordinate = result.getCoordinate();
-        Path filePath = FilePathUtil.getHotItemsFilePath(coordinate.source(), coordinate.period(),
-                coordinate.date(), coordinate.normalizedCategory(), coordinate.normalizedLanguage());
+        Path filePath = FilePathUtil.getHotItemsJsonPath(coordinate);
         if (!Files.exists(filePath)) {
             log.warn("Fetch result file not found: {}", filePath);
             return;
@@ -76,8 +74,7 @@ public class CrawlRepositoryImpl implements CrawlRepository {
 
     @Override
     public Optional<CrawlResult> loadItem(CrawlCoordinate coordinate) {
-        Path filePath = FilePathUtil.getHotItemsFilePath(coordinate.source(), coordinate.period(),
-                coordinate.date(), coordinate.normalizedCategory(), coordinate.normalizedLanguage());
+        Path filePath = FilePathUtil.getHotItemsJsonPath(coordinate);
         if (!Files.exists(filePath)) {
             return Optional.empty();
         }
@@ -94,8 +91,7 @@ public class CrawlRepositoryImpl implements CrawlRepository {
 
     @Override
     public List<CrawlResult> loadItems(CrawlCoordinate coordinate) throws IOException {
-        Path baseDir = FilePathUtil.getHotItemsDir(coordinate.source(), coordinate.period(),
-                coordinate.date(), null, null);
+        Path baseDir = FilePathUtil.getCrawlDir(coordinate);
         return walkHotItems(baseDir);
     }
 
@@ -136,9 +132,7 @@ public class CrawlRepositoryImpl implements CrawlRepository {
             item.setContentPath(HotItem.CONTENT_NOT_FOUND);
             return;
         }
-        String slug = FilePathUtil.sanitizeItemId(item.getId());
-        Path contentFilePath = FilePathUtil.getContentFilePath(coordinate.source(), coordinate.period(),
-                coordinate.date(), coordinate.normalizedCategory(), coordinate.normalizedLanguage(), slug);
+        Path contentFilePath = FilePathUtil.getContentFilePath(coordinate, item.getId());
         Files.createDirectories(contentFilePath.getParent());
         Files.writeString(contentFilePath, text, StandardCharsets.UTF_8);
         item.setContentPath(contentFilePath.toString().replace("\\", "/"));

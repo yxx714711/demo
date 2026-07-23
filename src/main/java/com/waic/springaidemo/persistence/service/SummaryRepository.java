@@ -13,12 +13,8 @@ import java.io.IOException;
 public interface SummaryRepository {
 
     /**
-     * 某 summary 节点是否已存在（续跑跳过判断）
-     */
-    boolean existsSummary(SummaryCoordinate coordinate) throws IOException;
-
-    /**
-     * 读取某 summary 节点
+     * 读取某 summary 节点。
+     * <p>文件不存在时返回 {@code null}（等价于「不存在」，供续跑跳过判断）；文件存在但解析失败则抛 {@link IOException}。</p>
      */
     SummaryResult loadSummary(SummaryCoordinate coordinate) throws IOException;
 
@@ -26,9 +22,4 @@ public interface SummaryRepository {
      * 原子写 result 节点（temp 文件 + rename，杜绝中途崩溃致文件残缺）
      */
     void saveSummary(SummaryCoordinate coordinate, SummaryResult result) throws IOException;
-
-    /**
-     * 单层 copy：将 src 节点 summary 复制为 dst 节点（D10 单 _ 子节点优化）
-     */
-    void copySummary(SummaryCoordinate src, SummaryCoordinate dst) throws IOException;
 }

@@ -20,19 +20,14 @@ import com.waic.springaidemo.pipeline.service.PipelineService;
 import com.waic.springaidemo.pipeline.utils.TextSplitterUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.core.io.Resource;
-import org.springframework.core.task.TaskExecutor;
 import org.springframework.stereotype.Service;
 import org.springframework.util.CollectionUtils;
 import org.springframework.util.StringUtils;
 
 import java.io.IOException;
 import java.time.LocalDate;
-import java.time.LocalDateTime;
 import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 import java.util.function.Predicate;
 
@@ -52,15 +47,6 @@ public class PipelineServiceImpl implements PipelineService {
     private final ReportGenerator reportGenerator;
     private final PromptTemplateManager promptTemplateManager;
     private final SummaryProperties summaryProperties;
-    @Qualifier("pipelineTaskExecutor")
-    private final TaskExecutor pipelineTaskExecutor;
-
-    /**
-     * 内存任务状态表：key=period（固定当天），value=该 period 的异步任务状态机。
-     * 仅用于「阻止重复触发」与「失败续跑」的判定，summary 树本身已在磁盘天然支持续跑。
-     * 注意：JVM 重启后此表清空（视为 IDLE），下次触发从磁盘断点续跑，安全。
-     */
-    private final Map<PeriodEnum, TaskState> taskStates = new ConcurrentHashMap<>();
 
     @Override
     public List<CrawlResult> runCrawl(CrawlCoordinate coordinate, boolean force) throws IOException {
@@ -182,9 +168,10 @@ public class PipelineServiceImpl implements PipelineService {
      * 缓存：非 force 且节点已存在则直接读回（断点续跑/防重复）。
      */
     private SummaryResult build(SummaryCoordinate key, List<CrawlResult> leaves, boolean force) throws IOException {
-        if (!force && summaryRepository.existsSummary(key)) {
+        SummaryResult cached = summaryRepository.loadSummary(key);
+        if (!force && cached != null) {
             log.info("[report] cache hit, skip node key={}", key);
-            return summaryRepository.loadSummary(key);
+            return cached;
         }
         LevelEnum level = key.level();
         if (level == LevelEnum.LANGUAGE) {
@@ -238,9 +225,10 @@ public class PipelineServiceImpl implements PipelineService {
     private SummaryResult computeLeaf(PeriodEnum period, LocalDate date, DataSourceEnum source,
                                       String category, String language, HotItem item, boolean force) throws IOException {
         SummaryCoordinate itemKey = SummaryCoordinate.item(period, date, source, category, language, item.getId());
-        if (!force && summaryRepository.existsSummary(itemKey)) {
+        SummaryResult cached = summaryRepository.loadSummary(itemKey);
+        if (!force && cached != null) {
             log.info("[report] cache hit, skip item key={}", itemKey);
-            return summaryRepository.loadSummary(itemKey);
+            return cached;
         }
 
         log.info("[report] compute item node key={} title={}", itemKey, item.getTitle());
@@ -306,17 +294,18 @@ public class PipelineServiceImpl implements PipelineService {
     private SummaryResult aggregate(SummaryCoordinate key, List<SummaryResult> children) throws IOException {
         LevelEnum level = key.level();
         log.info("[report] compute aggregate node key={} level={} children={}", key, level, children.size());
-        // D10 copy：非叶子层且唯一子节点的「被折叠段」未指定（null/空白）→ 直接 copy，不调 LLM
+        // D10 折叠：非叶子层且唯一子节点的「被折叠段」未指定（null/空白）→ 直接复用子节点摘要，不调 LLM。
+        // children.size()==1 保证 get(0) 非空；命中即 return，后续不再读其原坐标，故可安全改坐标后落盘。
         if (level != LevelEnum.ITEM && children.size() == 1 && isPlaceholderChild(level, children.get(0))) {
-            SummaryCoordinate childKey = SummaryCoordinate.childOf(
-                    key.period(), key.date(), key.source(), key.category(), key.language(), level, children.get(0));
-            summaryRepository.copySummary(childKey, key);
-            return summaryRepository.loadSummary(key);
+            SummaryResult child = children.get(0);
+            child.setCoordinate(key);
+            summaryRepository.saveSummary(key, child);
+            return child;
         }
 
         StringBuilder sb = new StringBuilder();
         for (SummaryResult child : children) {
-            sb.append("## [").append(child.level().getCode());
+            sb.append("## [").append(child.getCoordinate().level().getCode());
             if (child.getCoordinate().category() != null) {
                 sb.append(" category=").append(child.getCoordinate().category());
             }
@@ -355,83 +344,8 @@ public class PipelineServiceImpl implements PipelineService {
         };
     }
 
-
-
-    // ===== 组合任务：抓取 + 汇总（异步 + 断点续跑 + 防重复触发） =====
-
-    /**
-     * 触发组合任务（抓取→汇总）。同步、立即返回，是否真正启动由状态机决定。
-     * <ul>
-     *   <li>该 period 正在 RUNNING → 拒绝（返回 REJECTED_RUNNING，控制器回 409）</li>
-     *   <li>其余状态（IDLE/SUCCESS/FAILED）→ 置 RUNNING 并异步启动（控制器回 202）</li>
-     * </ul>
-     * 不使用 {@code @Async}（避开同 bean 自调用不异步的坑），改为手动提交到注入的有界线程池。
-     */
     @Override
-    public PipelineService.PipelineTriggerStatus triggerPipeline(PeriodEnum period) {
-        LocalDate today = LocalDate.now();
-        AtomicReference<PipelineService.PipelineTriggerStatus> ref = new AtomicReference<>();
-        taskStates.compute(period, (k, v) -> {
-            if (v != null && v.status == TaskStatus.RUNNING) {
-                ref.set(PipelineService.PipelineTriggerStatus.REJECTED_RUNNING);
-                return v; // 保持 RUNNING，拒绝
-            }
-            ref.set(PipelineService.PipelineTriggerStatus.STARTED);
-            return new TaskState(TaskStatus.RUNNING, today);
-        });
-        if (ref.get() == PipelineService.PipelineTriggerStatus.STARTED) {
-            pipelineTaskExecutor.execute(() -> runPipeline(period, today));
-        }
-        return ref.get();
-    }
-
-    /**
-     * 异步执行体：抓取（断点补 PENDING）→ 汇总（force=false 靠 existsSummary 续跑）。
-     * 无论成败都用 finally 把状态机落到 SUCCESS / FAILED，保证不会卡死在 RUNNING。
-     */
-    private void runPipeline(PeriodEnum period, LocalDate date) {
-        try {
-            log.info("[pipeline] start period={} date={}", period, date);
-            doDownload(doCrawl(date, period, crawler -> true, false));
-            SummaryResult report = runGenerate(SummaryCoordinate.top(period, date), false);
-            updateState(period, TaskStatus.SUCCESS, null);
-            log.info("[pipeline] done period={} date={} path={}",
-                    period, date, report.path());
-        } catch (Exception e) {
-            log.error("[pipeline] failed period={} date={}", period, date, e);
-            updateState(period, TaskStatus.FAILED, e.getMessage());
-        }
-    }
-
-    private void updateState(PeriodEnum period, TaskStatus status, String errorMessage) {
-        taskStates.compute(period, (k, v) -> {
-            TaskState s = (v != null) ? v : new TaskState(status, LocalDate.now());
-            s.status = status;
-            s.errorMessage = errorMessage;
-            s.updatedAt = LocalDateTime.now();
-            return s;
-        });
-    }
-
-    /**
-     * 单 period 的任务状态机（内存，仅用于防重复触发 + 失败续跑判定）。
-     */
-    private enum TaskStatus {
-        RUNNING,
-        SUCCESS,
-        FAILED
-    }
-
-    private static final class TaskState {
-        private volatile TaskStatus status;
-        private volatile String errorMessage;
-        private volatile LocalDate date;
-        private volatile LocalDateTime updatedAt;
-
-        TaskState(TaskStatus status, LocalDate date) {
-            this.status = status;
-            this.date = date;
-            this.updatedAt = LocalDateTime.now();
-        }
+    public SummaryResult runPipeline(PeriodEnum period) {
+        return null;
     }
 }

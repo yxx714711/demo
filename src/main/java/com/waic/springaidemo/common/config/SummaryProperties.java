@@ -17,7 +17,7 @@ import org.springframework.stereotype.Component;
 @Data
 public class SummaryProperties {
 
-    private String leafLevel = "ITEM";
+    private String leafLevel = "CHUNK";
     private int chunkMaxInputChars = 15000;
     private double chunkOverlapRatio = 0.2;
     private MaxChars maxChars = new MaxChars();

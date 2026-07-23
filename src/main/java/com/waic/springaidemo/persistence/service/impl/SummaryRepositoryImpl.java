@@ -28,11 +28,6 @@ public class SummaryRepositoryImpl implements SummaryRepository {
     private final ObjectMapper objectMapper;
 
     @Override
-    public boolean existsSummary(SummaryCoordinate coordinate) {
-        return Files.exists(FilePathUtil.getSummaryPath(coordinate));
-    }
-
-    @Override
     public SummaryResult loadSummary(SummaryCoordinate coordinate) throws IOException {
         Path filePath = FilePathUtil.getSummaryPath(coordinate);
         if (!Files.exists(filePath)) {
@@ -61,17 +56,5 @@ public class SummaryRepositoryImpl implements SummaryRepository {
             Files.deleteIfExists(temp);
         }
         log.info("Saved summary to {}", filePath);
-    }
-
-    @Override
-    public void copySummary(SummaryCoordinate src, SummaryCoordinate dst) throws IOException {
-        SummaryResult node = loadSummary(src);
-        if (node == null) {
-            throw new IllegalStateException("source summary not found: " + src);
-        }
-        // level/path 由 coordinate 派生：直接把坐标换成目标层即可（D10 复制场景父/子仅层级不同）
-        node.setCoordinate(dst);
-        saveSummary(dst, node);
-        log.info("Copied summary {} -> {}", src, dst);
     }
 }

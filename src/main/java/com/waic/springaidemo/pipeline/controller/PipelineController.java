@@ -8,8 +8,6 @@ import com.waic.springaidemo.pipeline.service.PipelineService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.format.annotation.DateTimeFormat;
-import org.springframework.http.HttpStatus;
-import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -54,22 +52,5 @@ public class PipelineController {
         DataSourceEnum resolvedSource = DataSourceEnum.ofNullable(source);
         CrawlCoordinate coordinate = new CrawlCoordinate(PeriodEnum.of(period), date, resolvedSource, null, null);
         return pipelineService.runCrawl(coordinate, force);
-    }
-
-    /**
-     * 组合任务触发：抓取 + 汇总生成日报（异步）。
-     * <p>立即返回，不阻塞等待：任务进行中（RUNNING）返回 409 阻止重复触发；
-     * 其余状态（首次/SUCCESS 再触发/失败续跑）返回 202 并在后台启动。日期固定为当天。</p>
-     *
-     * @param period 周期，可选 daily/weekly/monthly，默认 daily
-     * @return 202 Accepted 已启动；409 Conflict 任务进行中
-     */
-    @PostMapping("/pipeline/run")
-    public ResponseEntity<Void> runPipeline(@RequestParam(required = false, defaultValue = "daily") String period) {
-        PipelineService.PipelineTriggerStatus status = pipelineService.triggerPipeline(PeriodEnum.of(period));
-        if (status == PipelineService.PipelineTriggerStatus.REJECTED_RUNNING) {
-            return ResponseEntity.status(HttpStatus.CONFLICT).build();
-        }
-        return ResponseEntity.status(HttpStatus.ACCEPTED).build();
     }
 }

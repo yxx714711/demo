@@ -68,8 +68,13 @@ public record SummaryCoordinate(
         return new SummaryCoordinate(new CrawlCoordinate(period, date, null, null, null), null, null);
     }
 
-    public static SummaryCoordinate language(PeriodEnum period, LocalDate date, DataSourceEnum source,
-                                             String category, String language) {
+    /**
+     * 由完整 base（CrawlCoordinate 五维）组装一个汇总节点锚点（itemId/chunkId 为空）。
+     * 层级由传入的 base 各段决定（如 language=null 即 CATEGORY 层），不限于某一层。
+     * {@link #of} 按层级规约出 base 各段后复用本方法，避免重复 new。
+     */
+    public static SummaryCoordinate node(PeriodEnum period, LocalDate date, DataSourceEnum source,
+                                         String category, String language) {
         return new SummaryCoordinate(new CrawlCoordinate(period, date, source, category, language), null, null);
     }
 
@@ -88,40 +93,10 @@ public record SummaryCoordinate(
      */
     public static SummaryCoordinate of(PeriodEnum period, LocalDate date, DataSourceEnum source,
                                        String category, String language, LevelEnum level) {
-        String lang = (level == LevelEnum.CATEGORY) ? null : language;
+        String lang = (level == LevelEnum.CATEGORY || level == LevelEnum.SOURCE || level == LevelEnum.DATE) ? null : language;
         String cat = (level == LevelEnum.SOURCE || level == LevelEnum.DATE) ? null : category;
         DataSourceEnum src = (level == LevelEnum.DATE) ? null : source;
-        return new SummaryCoordinate(new CrawlCoordinate(period, date, src, cat, lang), null, null);
-    }
-
-    /**
-     * 由父层 level 推导唯一子节点对应的坐标（用于 D10 copy 的源定位）。
-     */
-    public static SummaryCoordinate childOf(PeriodEnum period, LocalDate date, DataSourceEnum source,
-                                            String category, String language, LevelEnum level, SummaryResult child) {
-        SummaryCoordinate c = child.getCoordinate();
-        return switch (level) {
-            case CATEGORY -> language(period, date, source, category, c.language());
-            case SOURCE -> new SummaryCoordinate(new CrawlCoordinate(period, date, source, c.category(), null), null, null);
-            case DATE -> new SummaryCoordinate(new CrawlCoordinate(period, date, c.source(), null, null), null, null);
-            case LANGUAGE -> item(period, date, source, category, language, c.itemId());
-            // ITEM：不会进入
-            default -> top(period, date);
-        };
-    }
-
-    /**
-     * 规整后的分类值：未指定时返回 "all"，避免作为 Map 键或路径段时出现 null。
-     */
-    public String normalizedCategory() {
-        return base.normalizedCategory();
-    }
-
-    /**
-     * 规整后的语言值：未指定时返回 "all"，避免作为 Map 键或路径段时出现 null。
-     */
-    public String normalizedLanguage() {
-        return base.normalizedLanguage();
+        return node(period, date, src, cat, lang);
     }
 
     /**

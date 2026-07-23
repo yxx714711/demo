@@ -1,8 +1,6 @@
 package com.waic.springaidemo.common.entity;
 
 import com.fasterxml.jackson.annotation.JsonUnwrapped;
-import com.waic.springaidemo.common.enums.LevelEnum;
-import com.waic.springaidemo.persistence.utils.FilePathUtil;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -24,12 +22,4 @@ public class SummaryResult {
     private SummaryCoordinate coordinate;
 
     private String summary;
-
-    public LevelEnum level() {
-        return coordinate.level();
-    }
-
-    public String path() {
-        return FilePathUtil.getSummaryPath(coordinate).toString().replace("\\", "/");
-    }
 }
