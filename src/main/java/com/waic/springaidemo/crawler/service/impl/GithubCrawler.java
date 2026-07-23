@@ -16,7 +16,6 @@ import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
 import org.jsoup.select.Elements;
 import org.springframework.stereotype.Component;
-import org.springframework.util.CollectionUtils;
 
 import java.io.IOException;
 import java.net.http.HttpResponse;
@@ -56,14 +55,15 @@ public class GithubCrawler implements Crawler {
 
     @Override
     public List<String> getLanguages() {
-        List<String> languages = crawlerProperties.getGithub().getLanguages();
-        return CollectionUtils.isEmpty(languages) ? List.of("all") : languages;
+        // 缺失语言维度返回空列表（而非 "all"），使抓取坐标的 language 为真正的 null，
+        // 下游 data 驱动汇总可直接用 == null 判断维度是否存在。
+        return crawlerProperties.getGithub().getLanguages();
     }
 
     @Override
     public CrawlResult crawl(CrawlCoordinate coordinate) {
         String periodParam = getPeriod(coordinate.period());
-        String langParam = "all".equals(coordinate.language()) ? "" : coordinate.language();
+        String langParam = coordinate.language() == null ? "" : coordinate.language();
         String url = String.format(crawlerProperties.getGithub().getHotBaseUrl(), langParam, periodParam);
         log.info("正在抓取 GitHub 热门仓库: {}", url);
 

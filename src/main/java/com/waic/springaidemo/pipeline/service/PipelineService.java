@@ -34,7 +34,7 @@ public interface PipelineService {
     /**
      * 递归聚合生成报告（后序遍历 data 树，逐节点调 LLM + 落盘），返回结构化结果。
      * <p>以 {@link SummaryCoordinate} 描述汇总请求：必为顶层（date 层）坐标，即 {@code SummaryCoordinate.top(period, date)}；
-     * source/category/language/itemId/chunkId 在顶层均为 null。无匹配数据时抛异常。</p>
+     * source/category/language/itemId 在顶层均为 null。无匹配数据时抛异常。</p>
      *
      * @param coordinate 顶层汇总坐标（见上文语义）
      * @param force      true=忽略已有、全量重算

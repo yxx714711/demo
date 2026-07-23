@@ -16,7 +16,6 @@ import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
 import org.jsoup.select.Elements;
 import org.springframework.stereotype.Component;
-import org.springframework.util.CollectionUtils;
 
 import java.io.IOException;
 import java.net.http.HttpResponse;
@@ -55,21 +54,25 @@ public class GiteeCrawler implements Crawler {
 
     @Override
     public List<String> getCategories() {
-        List<String> categories = crawlerProperties.getGitee().getCategories();
-        return CollectionUtils.isEmpty(categories) ? List.of("all") : categories;
+        // 缺失分类维度返回空列表（而非 "all"），使抓取坐标的 category 为真正的 null，
+        // 下游 data 驱动汇总可直接用 == null 判断维度是否存在。
+        return crawlerProperties.getGitee().getCategories();
     }
 
     @Override
     public List<String> getLanguages() {
-        List<String> languages = crawlerProperties.getGitee().getLanguages();
-        return CollectionUtils.isEmpty(languages) ? List.of("all") : languages;
+        // 缺失语言维度返回空列表（而非 "all"），使抓取坐标的 language 为真正的 null。
+        return crawlerProperties.getGitee().getLanguages();
     }
 
     @Override
     public CrawlResult crawl(CrawlCoordinate coordinate) {
         PeriodEnum period = coordinate.period();
         String selector = getTabSelector(period);
-        String url = String.format(crawlerProperties.getGitee().getHotBaseUrl(), coordinate.category(), coordinate.language());
+        // 维度为 null 时回退为 "all"（Gitee 探索页 URL 的合法取值），但抓取坐标仍存 null，保持数据干净。
+        String categoryParam = coordinate.category() == null ? "all" : coordinate.category();
+        String langParam = coordinate.language() == null ? "all" : coordinate.language();
+        String url = String.format(crawlerProperties.getGitee().getHotBaseUrl(), categoryParam, langParam);
         log.info("Crawling Gitee explore: {} period={}", url, period);
 
         Document document = pageCrawlUtil.crawlDocument(url);

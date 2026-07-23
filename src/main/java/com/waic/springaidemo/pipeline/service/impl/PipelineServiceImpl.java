@@ -23,12 +23,10 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.io.Resource;
 import org.springframework.stereotype.Service;
 import org.springframework.util.CollectionUtils;
-import org.springframework.util.StringUtils;
 
 import java.io.IOException;
 import java.time.LocalDate;
 import java.util.*;
-import java.util.function.Function;
 import java.util.function.Predicate;
 
 /**
@@ -164,63 +162,100 @@ public class PipelineServiceImpl implements PipelineService {
     }
 
     /**
-     * 坐标驱动递归（DATE→SOURCE→CATEGORY 按 CrawlCoordinate 维度分区；LANGUAGE 为叶子边界）。
+     * 数据驱动递归：维度顺序固定 source→category→language，但每个维度在数据中可能缺席（null/空白）。
+     * 由当前层级 + 实际样本决定下一分组维度；到叶子（无更多维度）时直接处理该组全部 items。
      * 缓存：非 force 且节点已存在则直接读回（断点续跑/防重复）。
      */
-    private SummaryResult build(SummaryCoordinate key, List<CrawlResult> leaves, boolean force) throws IOException {
-        SummaryResult cached = summaryRepository.loadSummary(key);
+    private SummaryResult build(SummaryCoordinate coordinate, List<CrawlResult> leaves, boolean force) throws IOException {
+        SummaryResult cached = summaryRepository.loadSummary(coordinate);
         if (!force && cached != null) {
-            log.info("[report] cache hit, skip node key={}", key);
+            log.info("[report] cache hit, skip node coordinate={}", coordinate);
             return cached;
         }
-        LevelEnum level = key.level();
-        if (level == LevelEnum.LANGUAGE) {
-            // 叶子边界：该语言桶必为唯一 CrawlResult，遍历其 items 建 ITEM 节点 → 聚合成 LANGUAGE
-            CrawlResult crawlResult = leaves.get(0);
-            log.info("[report] compute language node key={} items={}", key, crawlResult.getItems().size());
-            List<SummaryResult> itemNodes = new ArrayList<>();
-            for (HotItem item : crawlResult.getItems()) {
-                itemNodes.add(computeLeaf(key.period(), key.date(), key.source(), key.category(), key.language(), item, force));
-            }
-            return aggregate(key, itemNodes);
+        String nextDim = nextDimension(coordinate.level(), leaves.get(0).getCoordinate());
+        if (nextDim == null) {
+            // 叶子：本组所有 CrawlResult 的 items 都是该节点内容，逐条交给 AI 后向上聚合
+            return aggregateLeaf(coordinate, leaves, force);
         }
-        // 非叶子：按当前层的下一维度分区（源自 CrawlCoordinate），LinkedHashMap 保序
-        Function<CrawlCoordinate, String> dim = switch (level) {
-            case DATE -> cc -> cc.source().getCode();
-            case SOURCE -> CrawlCoordinate::normalizedCategory;
-            case CATEGORY -> CrawlCoordinate::normalizedLanguage;
-            default -> throw new IllegalStateException("unexpected grouping level: " + level);
-        };
-        Map<String, List<CrawlResult>> groups = new LinkedHashMap<>();
-        for (CrawlResult r : leaves) {
-            groups.computeIfAbsent(dim.apply(r.getCoordinate()), k -> new ArrayList<>()).add(r);
-        }
+        // 非叶子：按下一维度分区（源自 CrawlCoordinate），LinkedHashMap 保序
+        Map<String, List<CrawlResult>> groups = groupBy(leaves, nextDim);
         List<SummaryResult> children = new ArrayList<>();
         for (Map.Entry<String, List<CrawlResult>> e : groups.entrySet()) {
-            children.add(build(childKeyOf(key, level, e.getKey()), e.getValue(), force));
+            children.add(build(childKey(coordinate, nextDim, e.getKey()), e.getValue(), force));
         }
-        return aggregate(key, children);
+        return aggregate(coordinate, children);
     }
 
     /**
-     * 由父层坐标与分区维度值推导子节点坐标（对应 SummaryCoordinate.of 的层级约定）。
+     * 返回当前层级之后的下一分组维度名（"source"/"category"/"language"）；若无更多维度返回 null（到达叶子）。
+     * 约定：同组内所有 CrawlResult 同构（缺失维度一致），故取首条样本判断即可。
      */
-    private SummaryCoordinate childKeyOf(SummaryCoordinate parent, LevelEnum parentLevel, String dimValue) {
-        PeriodEnum period = parent.period();
-        LocalDate date = parent.date();
-        return switch (parentLevel) {
-            case DATE -> SummaryCoordinate.of(period, date, DataSourceEnum.of(dimValue), null, null, LevelEnum.SOURCE);
-            case SOURCE -> SummaryCoordinate.of(period, date, parent.source(), dimValue, null, LevelEnum.CATEGORY);
-            case CATEGORY -> SummaryCoordinate.of(period, date, parent.source(), parent.category(), dimValue, LevelEnum.LANGUAGE);
-            default -> throw new IllegalStateException("no child for level " + parentLevel);
+    private String nextDimension(LevelEnum level, CrawlCoordinate coordinate) {
+        return switch (level) {
+            case DATE -> "source"; // 顶层恒按 source 分区
+            case SOURCE -> hasDim(coordinate.category()) ? "category"
+                    : hasDim(coordinate.language()) ? "language"
+                    : null;                       // source 即叶子（缺 category/language）
+            case CATEGORY -> hasDim(coordinate.language()) ? "language" : null; // category 即叶子
+            default -> null;                      // LANGUAGE/ITEM 都为叶子边界
         };
     }
 
     /**
-     * 叶（ITEM）节点：整篇/伪正文交给 ai 统一生产；
-     * CHUNK 模式下 ai 额外给出各块摘要，本方法逐块落盘作为子节点（保树结构可追溯）。
+     * 按维度把 CrawlResult 分组。source 取枚举 code；category/language 取字段值，
+     * 缺席维度（null/空白）归为 "all" 桶，保证同构组内不分裂；"all" 本身作为真实取值原样成桶。
+     */
+    private Map<String, List<CrawlResult>> groupBy(List<CrawlResult> leaves, String dim) {
+        Map<String, List<CrawlResult>> groups = new LinkedHashMap<>();
+        for (CrawlResult r : leaves) {
+            CrawlCoordinate cc = r.getCoordinate();
+            String k = switch (dim) {
+                case "source" -> cc.source().getCode();
+                case "category" -> hasDim(cc.category()) ? cc.category() : "all";
+                case "language" -> hasDim(cc.language()) ? cc.language() : "all";
+                default -> throw new IllegalStateException("unknown dimension: " + dim);
+            };
+            groups.computeIfAbsent(k, x -> new ArrayList<>()).add(r);
+        }
+        return groups;
+    }
+
+    /**
+     * 由父层坐标与分区维度值推导子节点坐标。维度值若为 null/空白 视作缺失并规约为 null；
+     * "all" 等真实取值原样保留（不再规约为 null，否则会与上游「全部」维度冲突）。
+     */
+    private SummaryCoordinate childKey(SummaryCoordinate parent, String dim, String dimValue) {
+        String v = hasDim(dimValue) ? dimValue : null;
+        return switch (dim) {
+            case "source" -> SummaryCoordinate.node(
+                    parent.period(), parent.date(), DataSourceEnum.of(dimValue), null, null);
+            case "category" -> SummaryCoordinate.node(
+                    parent.period(), parent.date(), parent.source(), v, null);
+            case "language" -> SummaryCoordinate.node(
+                    parent.period(), parent.date(), parent.source(), parent.category(), v);
+            default -> throw new IllegalStateException("unknown dimension: " + dim);
+        };
+    }
+
+    /**
+     * 叶子节点：遍历组内所有 CrawlResult 的 items，逐条调 {@code computeLeaf} 生成 ITEM 节点，
+     * 再聚合成当前层摘要节点。
+     */
+    private SummaryResult aggregateLeaf(SummaryCoordinate key, List<CrawlResult> leaves, boolean force) throws IOException {
+        List<SummaryResult> itemNodes = new ArrayList<>();
+        for (CrawlResult r : leaves) {
+            for (HotItem item : r.getItems()) {
+                itemNodes.add(computeLeaf(key.period(), key.date(), key.source(), key.category(), key.language(), item, force));
+            }
+        }
+        return aggregate(key, itemNodes);
+    }
+
+    /**
+     * 叶（ITEM）节点：正文文本准备与 AI 总结解耦。
      * 正文为空（PENDING/下载失败）时用「标题 + 元数据摘要」拼伪正文再喂 AI；
-     * 完全无内容则兜底 "(无正文，跳过 AI)"，不建 CHUNK，但仍创建 ITEM 节点保证树完整、可重试。
+     * 完全无内容则兜底 "(无正文，跳过 AI)"，但仍创建 ITEM 节点保证树完整、可重试。
+     * 切片仅为喂 AI 不超限，不单独落盘 CHUNK 子节点。
      */
     private SummaryResult computeLeaf(PeriodEnum period, LocalDate date, DataSourceEnum source,
                                       String category, String language, HotItem item, boolean force) throws IOException {
@@ -233,54 +268,10 @@ public class PipelineServiceImpl implements PipelineService {
 
         log.info("[report] compute item node key={} title={}", itemKey, item.getTitle());
         String content = crawlRepository.loadContent(item.getContentPath());
-
-        String inputText;
-        if (content != null && !content.isBlank()) {
-            inputText = content; // D4：逐篇不截断（CHUNK 模式下由 pipeline 切片）
-        } else {
-            // 正文缺失，用标题 + 元数据摘要拼伪正文尝试一次 AI
-            StringBuilder pseudo = new StringBuilder();
-            if (item.getTitle() != null && !item.getTitle().isBlank()) {
-                pseudo.append("# ").append(item.getTitle()).append("\n");
-            }
-            if (item.getDescription() != null && !item.getDescription().isBlank()) {
-                pseudo.append(item.getDescription()).append("\n");
-            }
-            inputText = pseudo.isEmpty() ? null : pseudo.toString();
-        }
-
-        String summary;
-        if (inputText == null) {
-            summary = "(无正文，跳过 AI)"; // 兜底，不建 CHUNK
-        } else {
-            // 切片与否由配置决定：leafLevel=CHUNK 且超阈值才切片，否则整篇直接 leaf 模板
-            LevelEnum leafLevel = LevelEnum.of(summaryProperties.getLeafLevel());
-            boolean chunk = leafLevel == LevelEnum.CHUNK
-                    && inputText.length() > summaryProperties.getChunkMaxInputChars();
-            if (chunk) {
-                List<String> chunks = TextSplitterUtil.split(
-                        inputText, summaryProperties.getChunkMaxInputChars(), summaryProperties.getChunkOverlapRatio());
-                List<String> chunkSummaries = new ArrayList<>();
-                for (String chunkText : chunks) {
-                    chunkSummaries.add(reportGenerator.summarize(chunkText, promptTemplateManager.leafTemplate()));
-                }
-                String merged = String.join("\n\n", chunkSummaries);
-                // 多块聚回 ITEM 层（report 模板，2000）；单块直接取该块摘要
-                summary = (chunks.size() == 1)
-                        ? chunkSummaries.get(0)
-                        : reportGenerator.summarize(merged, promptTemplateManager.reportTemplate());
-                for (int i = 0; i < chunkSummaries.size(); i++) {
-                    String chunkId = "c" + i;
-                    SummaryCoordinate chunkKey = SummaryCoordinate.chunk(
-                            period, date, source, category, language, item.getId(), chunkId);
-                    SummaryResult chunkNode = SummaryResult.builder()
-                            .coordinate(chunkKey).summary(chunkSummaries.get(i)).build();
-                    summaryRepository.saveSummary(chunkKey, chunkNode);
-                }
-            } else {
-                summary = reportGenerator.summarize(inputText, promptTemplateManager.leafTemplate());
-            }
-        }
+        String inputText = prepareInputText(item, content);
+        String summary = (inputText == null)
+                ? "(无正文，跳过 AI)"
+                : summarizeLeaf(inputText);
 
         SummaryResult node = SummaryResult.builder()
                 .coordinate(itemKey).summary(summary).build();
@@ -289,27 +280,60 @@ public class PipelineServiceImpl implements PipelineService {
     }
 
     /**
-     * 聚合（category/source/date/language）节点：汇总子节点 summary → 调 LLM 或 D10 copy → 组装落盘。
+     * 准备喂给 AI 的输入文本：优先用 markdown 正文；正文缺失时用「标题 + 描述」拼伪正文兜底。
+     */
+    private String prepareInputText(HotItem item, String content) {
+        if (content != null && !content.isBlank()) {
+            return content;
+        }
+        StringBuilder pseudo = new StringBuilder();
+        if (item.getTitle() != null && !item.getTitle().isBlank()) {
+            pseudo.append("# ").append(item.getTitle()).append("\n");
+        }
+        if (item.getDescription() != null && !item.getDescription().isBlank()) {
+            pseudo.append(item.getDescription()).append("\n");
+        }
+        return pseudo.isEmpty() ? null : pseudo.toString();
+    }
+
+    /**
+     * 对单篇文本做 AI 总结：按配置决定整篇还是切片（性能低时先切片再聚合）。
+     * CHUNK 模式下各块摘要合回 ITEM 层，不单独落盘。
+     */
+    private String summarizeLeaf(String inputText) {
+        LevelEnum leafLevel = LevelEnum.of(summaryProperties.getLeafLevel());
+        boolean chunk = leafLevel == LevelEnum.CHUNK
+                && inputText.length() > summaryProperties.getChunkMaxInputChars();
+        if (!chunk) {
+            return reportGenerator.summarize(inputText, promptTemplateManager.leafTemplate());
+        }
+        List<String> chunks = TextSplitterUtil.split(
+                inputText, summaryProperties.getChunkMaxInputChars(), summaryProperties.getChunkOverlapRatio());
+        List<String> chunkSummaries = new ArrayList<>();
+        for (String chunkText : chunks) {
+            chunkSummaries.add(reportGenerator.summarize(chunkText, promptTemplateManager.leafTemplate()));
+        }
+        // 单块直接取该块摘要；多块聚回 ITEM 层（report 模板）
+        return (chunks.size() == 1)
+                ? chunkSummaries.get(0)
+                : reportGenerator.summarize(String.join("\n\n", chunkSummaries), promptTemplateManager.reportTemplate());
+    }
+
+    /**
+     * 聚合（source/category/language/date）节点：拼接子节点 summary → 调 LLM → 组装落盘。
+     * DATE 层用 report 模板，其余用 node 模板。
      */
     private SummaryResult aggregate(SummaryCoordinate key, List<SummaryResult> children) throws IOException {
         LevelEnum level = key.level();
         log.info("[report] compute aggregate node key={} level={} children={}", key, level, children.size());
-        // D10 折叠：非叶子层且唯一子节点的「被折叠段」未指定（null/空白）→ 直接复用子节点摘要，不调 LLM。
-        // children.size()==1 保证 get(0) 非空；命中即 return，后续不再读其原坐标，故可安全改坐标后落盘。
-        if (level != LevelEnum.ITEM && children.size() == 1 && isPlaceholderChild(level, children.get(0))) {
-            SummaryResult child = children.get(0);
-            child.setCoordinate(key);
-            summaryRepository.saveSummary(key, child);
-            return child;
-        }
 
         StringBuilder sb = new StringBuilder();
         for (SummaryResult child : children) {
             sb.append("## [").append(child.getCoordinate().level().getCode());
-            if (child.getCoordinate().category() != null) {
+            if (hasDim(child.getCoordinate().category())) {
                 sb.append(" category=").append(child.getCoordinate().category());
             }
-            if (child.getCoordinate().language() != null) {
+            if (hasDim(child.getCoordinate().language())) {
                 sb.append(" language=").append(child.getCoordinate().language());
             }
             sb.append("]\n").append(child.getSummary()).append("\n\n");
@@ -327,21 +351,11 @@ public class PipelineServiceImpl implements PipelineService {
     }
 
     /**
-     * 判定某非叶子层（level）下唯一子节点 child 的「被折叠段」是否未指定（null/空白）。
-     * D10：未指定维度不贡献信息，父摘要直接 copy 子摘要，跳过 LLM。
-     * - CATEGORY：折叠 language 段
-     * - SOURCE：折叠 category 段
-     * - DATE：折叠 source 段（code，实际恒指定）
-     * - LANGUAGE：折叠 itemId 段（实际不会触发，保留以贴合「除叶子外均适用」）
+     * 判定维度值是否真实存在（仅 null/空白 视作缺失；
+     * 注意 "all" 是上游真实取值——如 Gitee「全部推荐项目」tab、GitHub「All」语言，不当缺失）。
      */
-    private boolean isPlaceholderChild(LevelEnum level, SummaryResult child) {
-        return switch (level) {
-            case CATEGORY -> !StringUtils.hasText(child.getCoordinate().language());
-            case SOURCE -> !StringUtils.hasText(child.getCoordinate().category());
-            case DATE -> child.getCoordinate().source() == null;
-            case LANGUAGE -> !StringUtils.hasText(child.getCoordinate().itemId());
-            default -> false; // ITEM
-        };
+    private boolean hasDim(String value) {
+        return value != null && !value.isBlank();
     }
 
     @Override

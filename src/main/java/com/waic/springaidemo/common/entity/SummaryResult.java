@@ -8,7 +8,7 @@ import lombok.NoArgsConstructor;
 
 /**
  * 递归聚合节点总结，对应 summaries 树中某节点的 summary.json。
- * <p>坐标维度（period/source/date/category/language/itemId/chunkId）组合自 {@link SummaryCoordinate}，
+ * <p>坐标维度（period/source/date/category/language/itemId）组合自 {@link SummaryCoordinate}，
  * {@code level} / {@code path} 由其派生，不重复存储——仅 {@code summary} 为必须持久化的业务字段。</p>
  * @author 10542
  */

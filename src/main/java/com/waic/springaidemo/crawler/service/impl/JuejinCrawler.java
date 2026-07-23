@@ -16,7 +16,6 @@ import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
 import org.jsoup.select.Elements;
 import org.springframework.stereotype.Component;
-import org.springframework.util.CollectionUtils;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -45,8 +44,9 @@ public class JuejinCrawler implements Crawler {
 
     @Override
     public List<String> getCategories() {
-        List<String> categories = crawlerProperties.getJuejin().getCategories();
-        return CollectionUtils.isEmpty(categories) ? List.of("all") : categories;
+        // 缺失分类维度返回空列表（而非 "all"），使抓取坐标的 category 为真正的 null，
+        // 下游 data 驱动汇总可直接用 == null 判断维度是否存在。
+        return crawlerProperties.getJuejin().getCategories();
     }
 
     @Override
@@ -56,7 +56,7 @@ public class JuejinCrawler implements Crawler {
 
     @Override
     public CrawlResult crawl(CrawlCoordinate coordinate) {
-        String url = "all".equals(coordinate.category())
+        String url = coordinate.category() == null
                 ? crawlerProperties.getJuejin().getHotBaseUrl()
                 : crawlerProperties.getJuejin().getHotBaseUrl() + "/" + coordinate.category();
         log.info("Crawling Juejin hot articles: {}", url);

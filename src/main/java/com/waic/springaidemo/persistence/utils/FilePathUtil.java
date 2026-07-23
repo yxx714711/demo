@@ -60,7 +60,7 @@ public final class FilePathUtil {
 
     /**
      * 推导 summaries 树中某节点的 summary.json 路径（逐维独立：维度为 null/空白则不生成对应段）。
-     * 布局：summaries/{period}/{date}/{source}/{category?}/{language?}/{itemId?}/{chunkId?}/summary.json
+     * 布局：summaries/{period}/{date}/{source}/{category?}/{language?}/{itemId?}/summary.json
      * 仅当对应维度非 null/空白时才追加该段，故 GitHub（无 category）路径不含 category 段、
      * 掘金（无 language）路径不含 language 段，未指定维度不会凭空生成 "_" 目录。
      * 注意：hotitems 树（getCrawlDir）对 null 维度规约为 "all" 段，与本条规约不同，勿混用。
@@ -82,9 +82,6 @@ public final class FilePathUtil {
         if (StringUtils.hasText(coordinate.itemId())) {
             parts.add(sanitizeItemId(coordinate.itemId()));
         }
-        if (StringUtils.hasText(coordinate.chunkId())) {
-            parts.add(sanitizeChunkId(coordinate.chunkId()));
-        }
         return Paths.get(parts.get(0), parts.subList(1, parts.size()).toArray(new String[0]))
                 .resolve(SUMMARY_FILE);
     }
@@ -105,12 +102,5 @@ public final class FilePathUtil {
             }
         }
         return sb.toString();
-    }
-
-    /**
-     * 规整 chunkId 为合法路径段（chunk 索引由本服务生成，形如 c0/c1…，仅做基本清洗）。
-     */
-    private static String sanitizeChunkId(String chunkId) {
-        return sanitizeItemId(chunkId);
     }
 }
