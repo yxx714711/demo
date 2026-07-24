@@ -4,8 +4,6 @@ import com.waic.springaidemo.common.entity.CrawlCoordinate;
 import com.waic.springaidemo.common.entity.CrawlResult;
 import com.waic.springaidemo.common.entity.SummaryResult;
 import com.waic.springaidemo.common.entity.SummaryCoordinate;
-import com.waic.springaidemo.common.enums.PeriodEnum;
-
 import java.io.IOException;
 import java.util.List;
 
@@ -42,9 +40,4 @@ public interface PipelineService {
      * @throws IOException IO 异常
      */
     SummaryResult runGenerate(SummaryCoordinate coordinate, boolean force) throws IOException;
-
-    /**
-     * 触发组合任务
-     */
-    SummaryResult runPipeline(PeriodEnum period);
 }

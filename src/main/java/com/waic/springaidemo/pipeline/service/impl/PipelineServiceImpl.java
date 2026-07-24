@@ -336,9 +336,4 @@ public class PipelineServiceImpl implements PipelineService {
         }
         return sb.toString();
     }
-
-    @Override
-    public SummaryResult runPipeline(PeriodEnum period) {
-        throw new UnsupportedOperationException("runPipeline 尚未实现");
-    }
 }

@@ -41,8 +41,6 @@ public final class FilePathUtil {
         if (StringUtils.hasText(coordinate.language())) {
             parts.add(coordinate.language());
         }
-        parts.add(coordinate.category());
-        parts.add(coordinate.language());
         return Paths.get(parts.get(0), parts.subList(1, parts.size()).toArray(new String[0]));
     }
 

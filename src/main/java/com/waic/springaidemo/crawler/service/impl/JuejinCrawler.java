@@ -56,7 +56,7 @@ public class JuejinCrawler implements Crawler {
 
     @Override
     public CrawlResult crawl(CrawlCoordinate coordinate) {
-        String url = coordinate.category() == null
+        String url = coordinate.category() == null || coordinate.category().equals("all")
                 ? crawlerProperties.getJuejin().getHotBaseUrl()
                 : crawlerProperties.getJuejin().getHotBaseUrl() + "/" + coordinate.category();
         log.info("Crawling Juejin hot articles: {}", url);

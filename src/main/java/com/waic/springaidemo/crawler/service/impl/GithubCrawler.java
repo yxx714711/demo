@@ -63,7 +63,7 @@ public class GithubCrawler implements Crawler {
     @Override
     public CrawlResult crawl(CrawlCoordinate coordinate) {
         String periodParam = getPeriod(coordinate.period());
-        String langParam = coordinate.language() == null ? "" : coordinate.language();
+        String langParam = coordinate.language() == null || coordinate.language().equals("all") ? "" : coordinate.language();
         String url = String.format(crawlerProperties.getGithub().getHotBaseUrl(), langParam, periodParam);
         log.info("正在抓取 GitHub 热门仓库: {}", url);
 
