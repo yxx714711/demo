@@ -33,6 +33,8 @@ import java.util.function.Predicate;
  * Pipeline 编排服务实现
  * <p>单一职责：递归后序遍历 data 树，逐节点调 {@code reportGenerator} 生成文本、
  * 组装 {@link SummaryResult} 并交持久化服务落盘。本类不调用 LLM 以外逻辑，也不直接写文件。</p>
+ * <p>汇总树层级深度由数据驱动：固定 DATE → SOURCE，中间层 CATEGORY / LANGUAGE 可能存在或缺失，
+ * 文本文件始终位于 ITEM 层。同一 SOURCE 下结构一致。</p>
  */
 @Slf4j
 @Service
@@ -162,8 +164,15 @@ public class PipelineServiceImpl implements PipelineService {
     }
 
     /**
-     * 数据驱动递归：维度顺序固定 source→category→language，但每个维度在数据中可能缺席（null/空白）。
-     * 由当前层级 + 实际样本决定下一分组维度；到叶子（无更多维度）时直接处理该组全部 items。
+     * 数据驱动递归：层级深度由 CrawlCoordinate 中 category / language 是否存在决定。
+     * 同一 SOURCE 下结构一致，可能出现四种形态：
+     * <ol>
+     *   <li>DATE → SOURCE → ITEM（category、language 均缺失）</li>
+     *   <li>DATE → SOURCE → CATEGORY → ITEM（language 缺失）</li>
+     *   <li>DATE → SOURCE → LANGUAGE → ITEM（category 缺失）</li>
+     *   <li>DATE → SOURCE → CATEGORY → LANGUAGE → ITEM（标准结构）</li>
+     * </ol>
+     * 由当前层级 + 实际样本决定下一分组层级；到叶子（无更多层级）时直接处理该组全部 items。
      * 缓存：非 force 且节点已存在则直接读回（断点续跑/防重复）。
      */
     private SummaryResult build(SummaryCoordinate coordinate, List<CrawlResult> leaves, boolean force) throws IOException {
@@ -172,48 +181,48 @@ public class PipelineServiceImpl implements PipelineService {
             log.info("[report] cache hit, skip node coordinate={}", coordinate);
             return cached;
         }
-        String nextDim = nextDimension(coordinate.level(), leaves.get(0).getCoordinate());
-        if (nextDim == null) {
+        LevelEnum nextLevel = nextLevel(coordinate.level(), leaves.get(0).getCoordinate());
+        if (nextLevel == null) {
             // 叶子：本组所有 CrawlResult 的 items 都是该节点内容，逐条交给 AI 后向上聚合
             return aggregateLeaf(coordinate, leaves, force);
         }
-        // 非叶子：按下一维度分区（源自 CrawlCoordinate），LinkedHashMap 保序
-        Map<String, List<CrawlResult>> groups = groupBy(leaves, nextDim);
+        // 非叶子：按下一层级分区（源自 CrawlCoordinate），LinkedHashMap 保序
+        Map<String, List<CrawlResult>> groups = groupBy(leaves, nextLevel);
         List<SummaryResult> children = new ArrayList<>();
         for (Map.Entry<String, List<CrawlResult>> e : groups.entrySet()) {
-            children.add(build(childKey(coordinate, nextDim, e.getKey()), e.getValue(), force));
+            children.add(build(childKey(coordinate, nextLevel, e.getKey()), e.getValue(), force));
         }
         return aggregate(coordinate, children);
     }
 
     /**
-     * 返回当前层级之后的下一分组维度名（"source"/"category"/"language"）；若无更多维度返回 null（到达叶子）。
+     * 返回当前层级之后的下一分组层级；若无更多层级返回 null（到达叶子）。
      * 约定：同组内所有 CrawlResult 同构（缺失维度一致），故取首条样本判断即可。
      */
-    private String nextDimension(LevelEnum level, CrawlCoordinate coordinate) {
+    private LevelEnum nextLevel(LevelEnum level, CrawlCoordinate coordinate) {
         return switch (level) {
-            case DATE -> "source"; // 顶层恒按 source 分区
-            case SOURCE -> hasDim(coordinate.category()) ? "category"
-                    : hasDim(coordinate.language()) ? "language"
+            case DATE -> LevelEnum.SOURCE; // 顶层恒按 source 分区
+            case SOURCE -> hasDim(coordinate.category()) ? LevelEnum.CATEGORY
+                    : hasDim(coordinate.language()) ? LevelEnum.LANGUAGE
                     : null;                       // source 即叶子（缺 category/language）
-            case CATEGORY -> hasDim(coordinate.language()) ? "language" : null; // category 即叶子
+            case CATEGORY -> hasDim(coordinate.language()) ? LevelEnum.LANGUAGE : null; // category 即叶子
             default -> null;                      // LANGUAGE/ITEM 都为叶子边界
         };
     }
 
     /**
-     * 按维度把 CrawlResult 分组。source 取枚举 code；category/language 取字段值，
+     * 按层级把 CrawlResult 分组。source 取枚举 code；category/language 取字段值，
      * 缺席维度（null/空白）归为 "all" 桶，保证同构组内不分裂；"all" 本身作为真实取值原样成桶。
      */
-    private Map<String, List<CrawlResult>> groupBy(List<CrawlResult> leaves, String dim) {
+    private Map<String, List<CrawlResult>> groupBy(List<CrawlResult> leaves, LevelEnum level) {
         Map<String, List<CrawlResult>> groups = new LinkedHashMap<>();
         for (CrawlResult r : leaves) {
             CrawlCoordinate cc = r.getCoordinate();
-            String k = switch (dim) {
-                case "source" -> cc.source().getCode();
-                case "category" -> hasDim(cc.category()) ? cc.category() : "all";
-                case "language" -> hasDim(cc.language()) ? cc.language() : "all";
-                default -> throw new IllegalStateException("unknown dimension: " + dim);
+            String k = switch (level) {
+                case SOURCE -> cc.source().getCode();
+                case CATEGORY -> hasDim(cc.category()) ? cc.category() : "all";
+                case LANGUAGE -> hasDim(cc.language()) ? cc.language() : "all";
+                default -> throw new IllegalStateException("cannot group by leaf level: " + level);
             };
             groups.computeIfAbsent(k, x -> new ArrayList<>()).add(r);
         }
@@ -221,19 +230,19 @@ public class PipelineServiceImpl implements PipelineService {
     }
 
     /**
-     * 由父层坐标与分区维度值推导子节点坐标。维度值若为 null/空白 视作缺失并规约为 null；
+     * 由父层坐标与分区层级值推导子节点坐标。维度值若为 null/空白 视作缺失并规约为 null；
      * "all" 等真实取值原样保留（不再规约为 null，否则会与上游「全部」维度冲突）。
      */
-    private SummaryCoordinate childKey(SummaryCoordinate parent, String dim, String dimValue) {
+    private SummaryCoordinate childKey(SummaryCoordinate parent, LevelEnum level, String dimValue) {
         String v = hasDim(dimValue) ? dimValue : null;
-        return switch (dim) {
-            case "source" -> SummaryCoordinate.node(
+        return switch (level) {
+            case SOURCE -> SummaryCoordinate.node(
                     parent.period(), parent.date(), DataSourceEnum.of(dimValue), null, null);
-            case "category" -> SummaryCoordinate.node(
+            case CATEGORY -> SummaryCoordinate.node(
                     parent.period(), parent.date(), parent.source(), v, null);
-            case "language" -> SummaryCoordinate.node(
+            case LANGUAGE -> SummaryCoordinate.node(
                     parent.period(), parent.date(), parent.source(), parent.category(), v);
-            default -> throw new IllegalStateException("unknown dimension: " + dim);
+            default -> throw new IllegalStateException("cannot derive child key for leaf level: " + level);
         };
     }
 
@@ -327,27 +336,35 @@ public class PipelineServiceImpl implements PipelineService {
         LevelEnum level = key.level();
         log.info("[report] compute aggregate node key={} level={} children={}", key, level, children.size());
 
-        StringBuilder sb = new StringBuilder();
-        for (SummaryResult child : children) {
-            sb.append("## [").append(child.getCoordinate().level().getCode());
-            if (hasDim(child.getCoordinate().category())) {
-                sb.append(" category=").append(child.getCoordinate().category());
-            }
-            if (hasDim(child.getCoordinate().language())) {
-                sb.append(" language=").append(child.getCoordinate().language());
-            }
-            sb.append("]\n").append(child.getSummary()).append("\n\n");
-        }
-
+        String input = buildAggregateInput(children);
         Resource template = (level == LevelEnum.DATE)
                 ? promptTemplateManager.reportTemplate()
                 : promptTemplateManager.nodeTemplate();
-        String summary = reportGenerator.summarize(sb.toString(), template);
+        String summary = reportGenerator.summarize(input, template);
 
         SummaryResult node = SummaryResult.builder()
                 .coordinate(key).summary(summary).build();
         summaryRepository.saveSummary(key, node);
         return node;
+    }
+
+    /**
+     * 拼接聚合节点喂给 LLM 的输入文本：每个子节点一段，带上自身层级与 category/language 信息。
+     */
+    private String buildAggregateInput(List<SummaryResult> children) {
+        StringBuilder sb = new StringBuilder();
+        for (SummaryResult child : children) {
+            SummaryCoordinate cc = child.getCoordinate();
+            sb.append("## [").append(cc.level().getCode());
+            if (hasDim(cc.category())) {
+                sb.append(" category=").append(cc.category());
+            }
+            if (hasDim(cc.language())) {
+                sb.append(" language=").append(cc.language());
+            }
+            sb.append("]\n").append(child.getSummary()).append("\n\n");
+        }
+        return sb.toString();
     }
 
     /**
@@ -360,6 +377,6 @@ public class PipelineServiceImpl implements PipelineService {
 
     @Override
     public SummaryResult runPipeline(PeriodEnum period) {
-        return null;
+        throw new UnsupportedOperationException("runPipeline 尚未实现");
     }
 }
