@@ -23,6 +23,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.io.Resource;
 import org.springframework.stereotype.Service;
 import org.springframework.util.CollectionUtils;
+import org.springframework.util.StringUtils;
 
 import java.io.IOException;
 import java.time.LocalDate;
@@ -181,69 +182,38 @@ public class PipelineServiceImpl implements PipelineService {
             log.info("[report] cache hit, skip node coordinate={}", coordinate);
             return cached;
         }
-        LevelEnum nextLevel = nextLevel(coordinate.level(), leaves.get(0).getCoordinate());
+        CrawlCoordinate sample = leaves.get(0).getCoordinate();
+        LevelEnum nextLevel = coordinate.level().nextLevel(
+                StringUtils.hasText(sample.category()), StringUtils.hasText(sample.language()));
         if (nextLevel == null) {
             // 叶子：本组所有 CrawlResult 的 items 都是该节点内容，逐条交给 AI 后向上聚合
             return aggregateLeaf(coordinate, leaves, force);
         }
-        // 非叶子：按下一层级分区（源自 CrawlCoordinate），LinkedHashMap 保序
-        Map<String, List<CrawlResult>> groups = groupBy(leaves, nextLevel);
+        // 非叶子：按下一层级下钻分组（child 坐标作 key，LinkedHashMap 保序）
+        Map<SummaryCoordinate, List<CrawlResult>> groups = partitionByLevel(leaves, coordinate, nextLevel);
         List<SummaryResult> children = new ArrayList<>();
-        for (Map.Entry<String, List<CrawlResult>> e : groups.entrySet()) {
-            children.add(build(childKey(coordinate, nextLevel, e.getKey()), e.getValue(), force));
+        for (Map.Entry<SummaryCoordinate, List<CrawlResult>> entry : groups.entrySet()) {
+            children.add(build(entry.getKey(), entry.getValue(), force));
         }
         return aggregate(coordinate, children);
     }
 
     /**
-     * 返回当前层级之后的下一分组层级；若无更多层级返回 null（到达叶子）。
-     * 约定：同组内所有 CrawlResult 同构（缺失维度一致），故取首条样本判断即可。
+     * 下钻分组：把 leaves 按 nextLevel 拆成子节点（child 坐标作 key），
+     * 等价于先按维度值分桶、再据父坐标造子坐标，但省掉 String 中转桶键。
+     * 每个 leaf 取其在 level 上的维度值（{@code CrawlCoordinate#dimValue}），
+     * 再在父坐标上造出子节点（{@code SummaryCoordinate#child}）；LinkedHashMap 保序；
+     * null/真实值（含上游 "All"）各自成桶，与缺失的 null 区分开。
      */
-    private LevelEnum nextLevel(LevelEnum level, CrawlCoordinate coordinate) {
-        return switch (level) {
-            case DATE -> LevelEnum.SOURCE; // 顶层恒按 source 分区
-            case SOURCE -> hasDim(coordinate.category()) ? LevelEnum.CATEGORY
-                    : hasDim(coordinate.language()) ? LevelEnum.LANGUAGE
-                    : null;                       // source 即叶子（缺 category/language）
-            case CATEGORY -> hasDim(coordinate.language()) ? LevelEnum.LANGUAGE : null; // category 即叶子
-            default -> null;                      // LANGUAGE/ITEM 都为叶子边界
-        };
-    }
-
-    /**
-     * 按层级把 CrawlResult 分组。source 取枚举 code；category/language 取字段值，
-     * 缺席维度（null/空白）归为 "all" 桶，保证同构组内不分裂；"all" 本身作为真实取值原样成桶。
-     */
-    private Map<String, List<CrawlResult>> groupBy(List<CrawlResult> leaves, LevelEnum level) {
-        Map<String, List<CrawlResult>> groups = new LinkedHashMap<>();
+    private Map<SummaryCoordinate, List<CrawlResult>> partitionByLevel(
+            List<CrawlResult> leaves, SummaryCoordinate parent, LevelEnum level) {
+        Map<SummaryCoordinate, List<CrawlResult>> groups = new LinkedHashMap<>();
         for (CrawlResult r : leaves) {
-            CrawlCoordinate cc = r.getCoordinate();
-            String k = switch (level) {
-                case SOURCE -> cc.source().getCode();
-                case CATEGORY -> hasDim(cc.category()) ? cc.category() : "all";
-                case LANGUAGE -> hasDim(cc.language()) ? cc.language() : "all";
-                default -> throw new IllegalStateException("cannot group by leaf level: " + level);
-            };
-            groups.computeIfAbsent(k, x -> new ArrayList<>()).add(r);
+            String v = r.getCoordinate().dimValue(level);
+            SummaryCoordinate child = parent.child(level, v);
+            groups.computeIfAbsent(child, k -> new ArrayList<>()).add(r);
         }
         return groups;
-    }
-
-    /**
-     * 由父层坐标与分区层级值推导子节点坐标。维度值若为 null/空白 视作缺失并规约为 null；
-     * "all" 等真实取值原样保留（不再规约为 null，否则会与上游「全部」维度冲突）。
-     */
-    private SummaryCoordinate childKey(SummaryCoordinate parent, LevelEnum level, String dimValue) {
-        String v = hasDim(dimValue) ? dimValue : null;
-        return switch (level) {
-            case SOURCE -> SummaryCoordinate.node(
-                    parent.period(), parent.date(), DataSourceEnum.of(dimValue), null, null);
-            case CATEGORY -> SummaryCoordinate.node(
-                    parent.period(), parent.date(), parent.source(), v, null);
-            case LANGUAGE -> SummaryCoordinate.node(
-                    parent.period(), parent.date(), parent.source(), parent.category(), v);
-            default -> throw new IllegalStateException("cannot derive child key for leaf level: " + level);
-        };
     }
 
     /**
@@ -356,23 +326,15 @@ public class PipelineServiceImpl implements PipelineService {
         for (SummaryResult child : children) {
             SummaryCoordinate cc = child.getCoordinate();
             sb.append("## [").append(cc.level().getCode());
-            if (hasDim(cc.category())) {
+            if (StringUtils.hasText(cc.category())) {
                 sb.append(" category=").append(cc.category());
             }
-            if (hasDim(cc.language())) {
+            if (StringUtils.hasText(cc.language())) {
                 sb.append(" language=").append(cc.language());
             }
             sb.append("]\n").append(child.getSummary()).append("\n\n");
         }
         return sb.toString();
-    }
-
-    /**
-     * 判定维度值是否真实存在（仅 null/空白 视作缺失；
-     * 注意 "all" 是上游真实取值——如 Gitee「全部推荐项目」tab、GitHub「All」语言，不当缺失）。
-     */
-    private boolean hasDim(String value) {
-        return value != null && !value.isBlank();
     }
 
     @Override

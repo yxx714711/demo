@@ -35,8 +35,14 @@ public final class FilePathUtil {
         parts.add(coordinate.source().getCode());
         parts.add(coordinate.period().getCode());
         parts.add(coordinate.date().toString());
-        parts.add(coordinate.normalizedCategory());
-        parts.add(coordinate.normalizedLanguage());
+        if (StringUtils.hasText(coordinate.category())) {
+            parts.add(coordinate.category());
+        }
+        if (StringUtils.hasText(coordinate.language())) {
+            parts.add(coordinate.language());
+        }
+        parts.add(coordinate.category());
+        parts.add(coordinate.language());
         return Paths.get(parts.get(0), parts.subList(1, parts.size()).toArray(new String[0]));
     }
 

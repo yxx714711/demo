@@ -78,6 +78,22 @@ public record SummaryCoordinate(
     }
 
     /**
+     * 由父层坐标与分区层级值推导子节点坐标（下钻分组的写半边）。
+     * 维度值若为 null/空白 视作缺失并规约为 null；非空白真实取值（含上游 "All" 等）原样保留。
+     * SOURCE 额外做 String↔枚举转换（DataSourceEnum.of）。
+     * 仅对 SOURCE/CATEGORY/LANGUAGE 有效，其余层级属调用方误用，抛异常。
+     * 注：与 {@link CrawlCoordinate#dimValue} 构成正反映射，改动须同步。
+     */
+    public SummaryCoordinate child(LevelEnum level, String value) {
+        return switch (level) {
+            case SOURCE -> node(period(), date(), DataSourceEnum.of(value), null, null);
+            case CATEGORY -> node(period(), date(), source(), StringUtils.hasText(value) ? value : null, null);
+            case LANGUAGE -> node(period(), date(), source(), category(), StringUtils.hasText(value) ? value : null);
+            default -> throw new IllegalStateException("cannot derive child for level: " + level);
+        };
+    }
+
+    /**
      * 由坐标各段推导所属层级（与路径布局一致）。
      */
     public LevelEnum level() {

@@ -1,6 +1,7 @@
 package com.waic.springaidemo.common.entity;
 
 import com.waic.springaidemo.common.enums.DataSourceEnum;
+import com.waic.springaidemo.common.enums.LevelEnum;
 import com.waic.springaidemo.common.enums.PeriodEnum;
 import org.springframework.util.StringUtils;
 
@@ -25,16 +26,17 @@ public record CrawlCoordinate(
     }
 
     /**
-     * 获取规整后的分类值：未指定时返回 "all"，避免作为 Map 键或路径段时出现 null。
+     * 读出本坐标在指定层级上的维度值（下钻分组的读半边）：
+     * SOURCE 取枚举 code；CATEGORY/LANGUAGE 取字段值。
+     * 仅对 SOURCE/CATEGORY/LANGUAGE 有效，其余层级（叶子/顶层）属调用方误用，抛异常。
+     * 注：与 {@link SummaryCoordinate#child} 构成正反映射，改动须同步。
      */
-    public String normalizedCategory() {
-        return category != null ? category : "all";
-    }
-
-    /**
-     * 获取规整后的语言值：未指定时返回 "all"，避免作为 Map 键或路径段时出现 null。
-     */
-    public String normalizedLanguage() {
-        return language != null ? language : "all";
+    public String dimValue(LevelEnum level) {
+        return switch (level) {
+            case SOURCE -> source().getCode();
+            case CATEGORY -> category();
+            case LANGUAGE -> language();
+            default -> throw new IllegalStateException("cannot read dimension for level: " + level);
+        };
     }
 }
